@@ -2,6 +2,7 @@ import { prepareLegacyReleases } from "./legacy.mjs";
 import { createPublicServer } from "./public.mjs";
 import {
   androidConfig,
+  iconConfig,
   httpUrl,
   saveIcon,
   prepareAndroid,
@@ -114,7 +115,9 @@ export function validateProject(value) {
   fields.kind = value.kind || "web";
   if (!["web", "android"].includes(fields.kind)) fail("项目类型无效");
   fields.appConfig =
-    fields.kind === "android" ? androidConfig(value.appConfig) : {};
+    fields.kind === "android"
+      ? androidConfig(value.appConfig)
+      : iconConfig(value.appConfig);
   return fields;
 }
 
@@ -407,12 +410,16 @@ export class PublishingService {
           "SELECT * FROM projects WHERE kind='web' AND archived=0 AND currentReleaseId IS NOT NULL ORDER BY createdAt,id",
         )
         .all()
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          url: this.address(p),
-          version: p.currentReleaseId,
-        })),
+        .map((p) => {
+          const { icon } = iconConfig(p.appConfig);
+          return {
+            id: p.id,
+            name: p.name,
+            url: this.address(p),
+            version: p.currentReleaseId,
+            icon: icon ? `${this.publicOrigin()}/icons/${icon}` : "",
+          };
+        }),
     };
   }
   appSnapshot(p) {
@@ -427,7 +434,10 @@ export class PublishingService {
       customGameUrl: !!c.gameUrl,
       gameUrl: this.gameUrl(c),
       catalogUrl: `${this.publicOrigin()}/api/catalog`,
-      games: this.catalog().games,
+      games: this.catalog().games.map((game) => ({
+        ...game,
+        iconFile: iconConfig(this.project(game.id).appConfig).icon,
+      })),
     };
   }
   event(projectId, action, releaseId = null, fromReleaseId = null) {

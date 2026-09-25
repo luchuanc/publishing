@@ -766,6 +766,19 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
   const icon = await service.uploadIcon({
     data: "data:image/png;base64," + png.toString("base64"),
   });
+  await service.updateProject("demo", { appConfig: { icon: icon.icon } });
+  const catalog = await (
+    await fetch(service.publicOrigin() + "/api/catalog")
+  ).json();
+  assert.equal(
+    catalog.games[0].icon,
+    service.publicOrigin() + "/icons/" + icon.icon,
+  );
+  assert.equal((await fetch(catalog.games[0].icon)).status, 200);
+  await assert.rejects(
+    service.updateProject("demo", { appConfig: { icon: "../secret.png" } }),
+    /重新上传/,
+  );
   await assert.rejects(
     service.uploadIcon({ data: "data:image/svg+xml;base64,abcd" }),
     /PNG/,
@@ -784,7 +797,7 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
   });
   await writeFile(
     path.join(repo, "build.cjs"),
-    `const fs=require('node:fs'); const c=JSON.parse(fs.readFileSync('publishing.json')); if(c.versionName!=='2.3.4'||!c.gameUrl.endsWith('/demo/')||!fs.existsSync('publishing-icon.png'))process.exit(1); fs.mkdirSync('dist');fs.writeFileSync('dist/test.apk',Buffer.concat([Buffer.from('504b0304','hex'),Buffer.from(JSON.stringify(c))]));`,
+    `const fs=require('node:fs'); const c=JSON.parse(fs.readFileSync('publishing.json')); if(c.versionName!=='2.3.4'||!c.gameUrl.endsWith('/demo/')||!fs.existsSync('publishing-icon.png'))process.exit(1); for(const g of c.games){if(g.iconFile&&!fs.readFileSync('publishing-icons/'+g.iconFile).equals(fs.readFileSync('publishing-icon.png')))process.exit(2);} fs.mkdirSync('dist');fs.writeFileSync('dist/test.apk',Buffer.concat([Buffer.from('504b0304','hex'),Buffer.from(JSON.stringify(c))]));`,
   );
   git("add", ".");
   git("commit", "-m", "APK fixture");
@@ -795,12 +808,16 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
     autoPublish: false,
   });
   const first = service.enqueueRelease(order.id);
+  // Updating the game after enqueue must not change the queued APK's icon snapshot.
+  await service.updateProject("demo", { appConfig: { icon: "" } });
   await service.work;
   assert.equal(service.build(first.id).status, "succeeded");
   assert.equal(service.project("android").currentReleaseId, null);
   const attempt = service.snapshot().builds.find((b) => b.id === first.id);
   assert.match(attempt.sha256, /^[0-9a-f]{64}$/);
   assert.equal(attempt.appConfig.versionCode, 23);
+  assert.equal(attempt.appConfig.games[0].iconFile, icon.icon);
+  assert.equal(service.catalog().games[0].icon, "");
   const apk = await fetch(attempt.downloadUrl);
   assert.equal(
     apk.headers.get("content-type"),
@@ -828,10 +845,20 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
   );
   const second = service.enqueueRelease(order.id);
   await service.work;
+  assert.equal(
+    service.snapshot().builds.find((b) => b.id === second.id).appConfig.games[0]
+      .iconFile,
+    "",
+  );
   await service.publish("android", second.id);
   await service.rollback("android", second.id);
   assert.equal(service.project("android").currentReleaseId, first.id);
   service.updateSettings({ publicOrigin: "https://games.example.com:8888" });
+  await service.updateProject("demo", { appConfig: { icon: icon.icon } });
+  assert.equal(
+    service.catalog().games[0].icon,
+    `https://games.example.com:8888/icons/${icon.icon}`,
+  );
   assert.equal(
     service.snapshot().builds.find((b) => b.id === first.id).downloadUrl,
     `https://games.example.com:8888/downloads/android/${first.id}/app.apk`,

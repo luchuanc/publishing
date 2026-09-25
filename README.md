@@ -98,6 +98,14 @@ docker compose logs -f publishing
 
 升级前备份数据。旧三款游戏的成功产物自动生成子目录兼容副本，原产物保留，因此旧版本也能回滚。浏览器存档属于原 origin；从原游戏端口迁移到新 origin 前，使用游戏自身的导出功能备份玩家存档，平台不会迁移浏览器数据。山海弈离线缓存按游戏路径隔离；PWA 需要 HTTPS 或 localhost。
 
+### 按应用切换桌面图标
+
+在「项目管理 → 对应网页游戏 → 配置 → 应用图标」上传该游戏的正方形 PNG（48–2048 像素，最大 2 MB）。Android 项目的图标是未选择应用时的默认图标。App 完成首次选择后，桌面入口使用所选应用的图标；未配置专属图标的游戏回退到默认图标。内置账本、积分等内容保留各自图标。
+
+`/api/catalog` 的游戏项增加 `icon` 字段，返回当前生产域名下的公开图片地址，未配置时为空字符串。修改图标会立即反映在目录中，但 Android 桌面图标必须随 APK 预先打包：保存图标后重新构建、安装 APK，才会更新手机桌面图标。仅刷新远端列表不能替换已安装 APK 的图标资源。
+
+每次 Android 构建固定游戏列表及图标文件哈希；`publishing.json` 的 `games[].iconFile` 对应 `publishing-icons/<hash>.png`。排队后修改图标不会改变该次构建，历史版本和回滚产物也保留原图标。h5-app 根据稳定游戏 ID 生成 launcher aliases，在同一个 App 内切换桌面入口。
+
 ### Android 调试 APK
 
 已有安装在项目管理中新建 `Android APK`，仓库 `git@github.com:luchuanc/h5-app.git`，构建命令 `sh ./gradlew --no-daemon --console=plain :app:assembleDebug`，产物目录 `app/build/outputs/apk/debug`，安装命令留空。新安装默认包含该项目。

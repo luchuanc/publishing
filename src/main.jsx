@@ -220,15 +220,69 @@ function Login({ onLogin }) {
     </div>
   );
 }
-function AppConfigFields({ value, onChange, games, origin, onUploading }) {
+function IconField({ value, onChange, onUploading, label }) {
   const [error, setError] = useState("");
+  return (
+    <>
+      <label>
+        {label}（正方形 PNG，最大 2 MB）
+        <input
+          type="file"
+          accept="image/png"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            onUploading(true);
+            setError("");
+            try {
+              if (file.size > 2 * 1024 * 1024)
+                throw new Error("图标不能超过 2 MB");
+              const data = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              });
+              const result = await send("/icons", { data });
+              onChange(result.icon);
+            } catch (error) {
+              setError(error.message || "图标上传失败");
+            } finally {
+              onUploading(false);
+              e.target.value = "";
+            }
+          }}
+        />
+      </label>
+      {value && (
+        <div className="icon-preview">
+          <img
+            src={`/api/icons/${value}`}
+            alt={`${label}预览`}
+            width="64"
+            height="64"
+          />
+          <button type="button" onClick={() => onChange("")}>
+            恢复默认图标
+          </button>
+        </div>
+      )}
+      {error && (
+        <p role="alert" className="error-text">
+          {error}
+        </p>
+      )}
+    </>
+  );
+}
+function AppConfigFields({ value, onChange, games, origin, onUploading }) {
   const update = (key, next) => onChange({ ...value, [key]: next });
   const defaultUrl = value.defaultGameId
     ? `${origin}/${value.defaultGameId}/`
     : "";
   return (
     <fieldset className="app-config">
-      <legend>Android 调试 APK</legend>
+      <legend>Android APK</legend>
       <label>
         App 名称
         <input
@@ -290,58 +344,17 @@ function AppConfigFields({ value, onChange, games, origin, onUploading }) {
           : "填写 App 首次启动打开的地址。"}{" "}
         选中游戏后，App 会记住选择；游戏列表从平台刷新。
       </p>
-      <label>
-        App 图标（正方形 PNG，最大 2 MB）
-        <input
-          type="file"
-          accept="image/png"
-          onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
-            onUploading(true);
-            setError("");
-            try {
-              if (file.size > 2 * 1024 * 1024)
-                throw new Error("图标不能超过 2 MB");
-              const data = await new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = () => resolve(reader.result);
-                reader.onerror = reject;
-                reader.readAsDataURL(file);
-              });
-              const result = await send("/icons", { data });
-              update("icon", result.icon);
-            } catch (error) {
-              setError(error.message || "图标上传失败");
-            } finally {
-              onUploading(false);
-              e.target.value = "";
-            }
-          }}
-        />
-      </label>
-      {value.icon && (
-        <div className="icon-preview">
-          <img
-            src={`/api/icons/${value.icon}`}
-            alt="App 图标预览"
-            width="64"
-            height="64"
-          />
-          <button type="button" onClick={() => update("icon", "")}>
-            恢复默认图标
-          </button>
-        </div>
-      )}
+      <IconField
+        label="默认 App 图标"
+        value={value.icon}
+        onChange={(icon) => update("icon", icon)}
+        onUploading={onUploading}
+      />
       <p className="help">
-        图标、名称、版本和默认游戏在下一次构建时写入
-        APK。版本代码增加后可覆盖安装。
+        这里设置尚未选择应用时的默认图标。选择应用后使用该应用的专属图标；
+        游戏图标在对应网页游戏项目中配置。图标、名称、版本和默认游戏随下一次构建写入
+        APK， 图标变更需要安装新 APK。同签名且版本代码增加后可覆盖安装。
       </p>
-      {error && (
-        <p role="alert" className="error-text">
-          {error}
-        </p>
-      )}
     </fieldset>
   );
 }
@@ -516,10 +529,23 @@ function ProjectForm({ project, projects, system, onSave, onClose, busy }) {
               onUploading={setUploading}
             />
           ) : (
-            <p className="help">
-              访问地址：{system.publicOrigin}/{form.id || "项目标识"}
-              /。统一域名可在平台设置中修改。
-            </p>
+            <fieldset className="app-config">
+              <legend>应用图标</legend>
+              <IconField
+                label="选中此游戏后的桌面图标"
+                value={form.appConfig?.icon || ""}
+                onChange={(icon) => setForm({ ...form, appConfig: { icon } })}
+                onUploading={setUploading}
+              />
+              <p className="help">
+                保存后游戏列表立即更新。重新构建并安装 Android APK 后，
+                选择此游戏会使用该图标；未配置时使用默认图标。
+              </p>
+              <p className="help">
+                访问地址：{system.publicOrigin}/{form.id || "项目标识"}
+                /。统一域名可在平台设置中修改。
+              </p>
+            </fieldset>
           )}
           {error && (
             <p className="error-text" role="alert">

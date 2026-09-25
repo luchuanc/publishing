@@ -27,6 +27,20 @@ export function httpUrl(value) {
     invalid("链接必须是完整 HTTP 或 HTTPS 地址，不含用户名和密码");
   }
 }
+export function iconConfig(value = {}) {
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      invalid("图标配置无效");
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    invalid("图标配置无效");
+  const icon = String(value.icon || "");
+  if (icon && !/^[0-9a-f]{64}\.png$/.test(icon)) invalid("请重新上传应用图标");
+  return { icon };
+}
 export function androidConfig(value = {}) {
   if (typeof value === "string") {
     try {
@@ -43,7 +57,7 @@ export function androidConfig(value = {}) {
     versionCode: Number(value.versionCode ?? 1),
     defaultGameId: String(value.defaultGameId || ""),
     gameUrl: value.gameUrl ? httpUrl(String(value.gameUrl).trim()) : "",
-    icon: String(value.icon || ""),
+    icon: iconConfig(value).icon,
   };
   if (
     !config.appName ||
@@ -64,8 +78,6 @@ export function androidConfig(value = {}) {
     !/^[a-zA-Z][a-zA-Z0-9-]{1,39}$/.test(config.defaultGameId)
   )
     invalid("默认游戏无效");
-  if (config.icon && !/^[0-9a-f]{64}\.png$/.test(config.icon))
-    invalid("请重新上传 App 图标");
   return config;
 }
 export async function saveIcon(dataDir, input) {
@@ -104,6 +116,16 @@ export async function prepareAndroid(checkout, dataDir, config) {
       path.join(dataDir, "icons", config.icon),
       path.join(checkout, "publishing-icon.png"),
     );
+  // Hash-addressed files keep queued builds tied to the icon selected at enqueue time.
+  for (const game of config.games || []) {
+    const { icon } = iconConfig({ icon: game.iconFile });
+    if (!icon) continue;
+    await mkdir(path.join(checkout, "publishing-icons"), { recursive: true });
+    await cp(
+      path.join(dataDir, "icons", icon),
+      path.join(checkout, "publishing-icons", icon),
+    );
+  }
 }
 export async function collectApk(output, destination) {
   const apks = [];

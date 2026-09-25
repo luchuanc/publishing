@@ -7,7 +7,7 @@ try {
   const password = randomBytes(24).toString("base64url");
   await writeFile(
     ".env",
-    `HOST=127.0.0.1\nPORT=8080\nPUBLIC_URL=http://127.0.0.1:8080\nGAME_PUBLIC_HOST=127.0.0.1\nGAME_PORT_START=8201\nGAME_PORT_END=8299\nDATA_DIR=.data\nADMIN_PASSWORD=${password}\n`,
+    `HOST=127.0.0.1\nPORT=8080\nPUBLIC_URL=http://127.0.0.1:8080\nGAME_PUBLIC_HOST=127.0.0.1\nPUBLIC_PORT=8200\nDATA_DIR=.data\nADMIN_PASSWORD=${password}\n`,
     { flag: "wx", mode: 0o600 },
   );
   console.log(

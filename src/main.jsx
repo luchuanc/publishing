@@ -100,6 +100,8 @@ const blankProject = {
   buildCommand: "npm run build",
   outputDir: "dist",
   publicUrl: "",
+  kind: "web",
+  appConfig: {},
 };
 
 function Status({ build, live = false }) {
@@ -218,8 +220,201 @@ function Login({ onLogin }) {
     </div>
   );
 }
-function ProjectForm({ project, onSave, onClose, busy }) {
+function AppConfigFields({ value, onChange, games, origin, onUploading }) {
+  const [error, setError] = useState("");
+  const update = (key, next) => onChange({ ...value, [key]: next });
+  const defaultUrl = value.defaultGameId
+    ? `${origin}/${value.defaultGameId}/`
+    : "";
+  return (
+    <fieldset className="app-config">
+      <legend>Android 调试 APK</legend>
+      <label>
+        App 名称
+        <input
+          value={value.appName || ""}
+          placeholder="游戏中心"
+          onChange={(e) => update("appName", e.target.value)}
+          maxLength={40}
+        />
+      </label>
+      <div className="form-grid">
+        <label>
+          版本号
+          <input
+            value={value.versionName || "1.0.0"}
+            onChange={(e) => update("versionName", e.target.value)}
+            required
+          />
+        </label>
+        <label>
+          版本代码
+          <input
+            type="number"
+            min="1"
+            max="2100000000"
+            value={value.versionCode ?? 1}
+            onChange={(e) => update("versionCode", Number(e.target.value))}
+            required
+          />
+        </label>
+      </div>
+      <label>
+        默认游戏
+        <select
+          value={value.defaultGameId || ""}
+          onChange={(e) => update("defaultGameId", e.target.value)}
+        >
+          <option value="">使用自定义游戏链接</option>
+          {games.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+              {!p.currentReleaseId ? "（未发布）" : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        游戏链接
+        <input
+          type="url"
+          value={value.gameUrl || ""}
+          placeholder={defaultUrl || "https://games.example.com/xiangsu/"}
+          onChange={(e) => update("gameUrl", e.target.value)}
+          required={!value.defaultGameId}
+        />
+      </label>
+      <p className="help">
+        {defaultUrl
+          ? `留空自动使用 ${defaultUrl}，也可以填入其他链接。`
+          : "填写 App 首次启动打开的地址。"}{" "}
+        选中游戏后，App 会记住选择；游戏列表从平台刷新。
+      </p>
+      <label>
+        App 图标（正方形 PNG，最大 2 MB）
+        <input
+          type="file"
+          accept="image/png"
+          onChange={async (e) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            onUploading(true);
+            setError("");
+            try {
+              if (file.size > 2 * 1024 * 1024)
+                throw new Error("图标不能超过 2 MB");
+              const data = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+              });
+              const result = await send("/icons", { data });
+              update("icon", result.icon);
+            } catch (error) {
+              setError(error.message || "图标上传失败");
+            } finally {
+              onUploading(false);
+              e.target.value = "";
+            }
+          }}
+        />
+      </label>
+      {value.icon && (
+        <div className="icon-preview">
+          <img
+            src={`/api/icons/${value.icon}`}
+            alt="App 图标预览"
+            width="64"
+            height="64"
+          />
+          <button type="button" onClick={() => update("icon", "")}>
+            恢复默认图标
+          </button>
+        </div>
+      )}
+      <p className="help">
+        图标、名称、版本和默认游戏在下一次构建时写入
+        APK。版本代码增加后可覆盖安装。
+      </p>
+      {error && (
+        <p role="alert" className="error-text">
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+function PublicSettings({ system, onSave, busy }) {
+  const [value, setValue] = useState(system.configuredOrigin || "");
+  const [error, setError] = useState("");
+  return (
+    <section>
+      <h2>公开访问地址</h2>
+      <p>
+        游戏、APK 下载与游戏列表共用端口 {system.publicPort}
+        。域名的反向代理指向这个端口，并保留完整路径。
+      </p>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setError("");
+          try {
+            await onSave({ publicOrigin: value });
+          } catch (e) {
+            setError(e.message);
+          }
+        }}
+      >
+        <label>
+          生产域名（可带端口）
+          <input
+            type="url"
+            value={value}
+            placeholder="https://games.xxx.site:8888"
+            onChange={(e) => setValue(e.target.value)}
+          />
+        </label>
+        <p className="help">
+          留空使用服务器地址。保存后已有游戏链接和 APK
+          下载链接立即更新，无需重新构建。
+        </p>
+        {error && (
+          <p className="error-text" role="alert">
+            {error}
+          </p>
+        )}
+        <button className="primary" disabled={busy}>
+          保存访问地址
+        </button>
+      </form>
+      <dl>
+        <div>
+          <dt>当前资源地址</dt>
+          <dd>
+            <code>{system.publicOrigin}</code>
+          </dd>
+        </div>
+        <div>
+          <dt>公开游戏列表</dt>
+          <dd>
+            <a href={system.catalogUrl} target="_blank" rel="noreferrer">
+              {system.catalogUrl}
+            </a>
+          </dd>
+        </div>
+      </dl>
+      <p className="help">
+        已安装 App
+        会通过列表更新游戏地址。更换域名时，请让旧列表入口继续可访问或重定向到新地址；图标和版本变更需重新安装新
+        APK。
+      </p>
+    </section>
+  );
+}
+function ProjectForm({ project, projects, system, onSave, onClose, busy }) {
   const [form, setForm] = useState(project || blankProject),
+    [uploading, setUploading] = useState(false),
     [error, setError] = useState("");
   const field = (key, label, placeholder, extra = {}) => (
     <label>
@@ -235,7 +430,7 @@ function ProjectForm({ project, onSave, onClose, busy }) {
   return (
     <Modal
       title={project ? "项目设置" : "新建项目"}
-      subtitle="配置仓库、构建命令与游戏访问地址。发布时在发布单中选择分支。"
+      subtitle="配置项目与构建参数，发布单中选择分支并保留每次构建日志。"
       onClose={onClose}
     >
       <form
@@ -250,12 +445,44 @@ function ProjectForm({ project, onSave, onClose, busy }) {
         }}
       >
         <div className="form-body">
+          <label>
+            项目类型
+            <select
+              value={form.kind || "web"}
+              disabled={!!project?.latestBuild}
+              onChange={(e) => {
+                const kind = e.target.value;
+                setForm({
+                  ...form,
+                  kind,
+                  installCommand: kind === "android" ? "" : "npm ci",
+                  buildCommand:
+                    kind === "android"
+                      ? "sh ./gradlew --no-daemon --console=plain :app:assembleDebug"
+                      : "npm run build",
+                  outputDir:
+                    kind === "android" ? "app/build/outputs/apk/debug" : "dist",
+                  appConfig: {
+                    appName: "游戏中心",
+                    versionName: "1.0.0",
+                    versionCode: 1,
+                    defaultGameId:
+                      projects.find((p) => p.kind === "web" && !p.archived)
+                        ?.id || "",
+                  },
+                });
+              }}
+            >
+              <option value="web">网页游戏</option>
+              <option value="android">Android APK</option>
+            </select>
+          </label>
           <div className="form-grid">
-            {field("name", "游戏名称", "例如：山海弈", {
+            {field("name", "项目名称", "例如：山海弈", {
               required: true,
               maxLength: 80,
             })}
-            {field("id", "游戏标识", "例如：zizou", {
+            {field("id", "项目标识", "例如：zizou", {
               required: true,
               disabled: !!project,
               pattern: "[a-zA-Z][a-zA-Z0-9-]{1,39}",
@@ -274,12 +501,26 @@ function ProjectForm({ project, onSave, onClose, busy }) {
           })}
           <div className="field-note">
             <Terminal size={15} />
-            <span>构建在仓库根目录执行，产物目录中需包含 index.html。</span>
+            <span>
+              {form.kind === "android"
+                ? "构建调试 APK；服务器需要 JDK 17 与 Android SDK。"
+                : "产物目录需包含 index.html；游戏资源应支持子目录部署。"}
+            </span>
           </div>
-          {field("publicUrl", "独立域名（可选）", "https://game.example.com")}
-          <p className="help">
-            留空时自动使用服务器 IP 和游戏端口。自定义域名需先配置反向代理。
-          </p>
+          {form.kind === "android" ? (
+            <AppConfigFields
+              value={form.appConfig || {}}
+              onChange={(appConfig) => setForm({ ...form, appConfig })}
+              games={projects.filter((p) => p.kind === "web" && !p.archived)}
+              origin={system.publicOrigin}
+              onUploading={setUploading}
+            />
+          ) : (
+            <p className="help">
+              访问地址：{system.publicOrigin}/{form.id || "项目标识"}
+              /。统一域名可在平台设置中修改。
+            </p>
+          )}
           {error && (
             <p className="error-text" role="alert">
               {error}
@@ -290,7 +531,7 @@ function ProjectForm({ project, onSave, onClose, busy }) {
           <button type="button" onClick={onClose}>
             取消
           </button>
-          <button className="primary" disabled={busy}>
+          <button className="primary" disabled={busy || uploading}>
             {busy ? (
               <Loader2 className="spin" size={16} />
             ) : (
@@ -816,10 +1057,22 @@ function App() {
                     {time(b.createdAt)}
                     <small className="cell-sub">{duration(b)}</small>
                   </td>
-                  <td>{size(b.sizeBytes)}</td>
+                  <td>
+                    {size(b.sizeBytes)}
+                    {b.appConfig && (
+                      <small className="cell-sub">
+                        v{b.appConfig.versionName} · {b.appConfig.versionCode}
+                      </small>
+                    )}
+                  </td>
                   <td>
                     <div className="row-actions">
                       <button onClick={() => showLog(b)}>日志</button>
+                      {b.downloadUrl && (
+                        <a className="text-button" href={b.downloadUrl}>
+                          下载 APK
+                        </a>
+                      )}
                       {b.status === "succeeded" &&
                         p?.currentReleaseId !== b.id &&
                         !p?.archived && (
@@ -1387,7 +1640,10 @@ function App() {
                   <p>
                     <GitBranch size={14} />
                     {project.branch}
-                    <span>·</span>端口 {project.port}
+                    <span>·</span>
+                    {project.kind === "android"
+                      ? "Android APK"
+                      : `/${project.id}/`}
                     <span>·</span>
                     {project.outputDir}/
                   </p>
@@ -1399,7 +1655,7 @@ function App() {
                     target="_blank"
                     rel="noreferrer"
                   >
-                    打开游戏
+                    {project.kind === "android" ? "下载 APK" : "打开游戏"}
                     <ExternalLink size={16} />
                   </a>
                 )}
@@ -1498,7 +1754,7 @@ function App() {
               <div className="metrics">
                 <div>
                   <span>
-                    已上线游戏
+                    已发布项目
                     <Radio size={15} />
                   </span>
                   <strong>
@@ -1546,7 +1802,7 @@ function App() {
               <div className="list-toolbar">
                 <div className="tabs">
                   {[
-                    ["all", "全部游戏"],
+                    ["all", "全部项目"],
                     ["live", "已上线"],
                     ["unpublished", "待发布"],
                     ["archived", "已归档"],
@@ -1583,7 +1839,7 @@ function App() {
                 <table className="games-table">
                   <thead>
                     <tr>
-                      <th>游戏项目</th>
+                      <th>项目</th>
                       <th>Git 仓库 / 分支</th>
                       <th>线上版本</th>
                       <th>发布单</th>
@@ -1624,7 +1880,7 @@ function App() {
                           {p.currentReleaseId && !p.archived ? (
                             <div className="table-url">
                               <a href={p.url} target="_blank" rel="noreferrer">
-                                访问游戏
+                                {p.kind === "android" ? "下载 APK" : "访问游戏"}
                                 <ArrowUpRight size={12} />
                               </a>
                               <button
@@ -1686,7 +1942,7 @@ function App() {
                 )}
               </div>
               <div className="list-footer">
-                <span>{filtered.length} 个游戏项目</span>
+                <span>{filtered.length} 个项目</span>
                 <span>
                   <span className="dot" />每 2.5 秒自动更新
                 </span>
@@ -1806,6 +2062,17 @@ function App() {
             </div>
           ) : (
             <div className="settings">
+              <PublicSettings
+                system={state.system}
+                busy={busy}
+                onSave={(form) =>
+                  action(
+                    () => send("/settings", form, "PATCH"),
+                    "公开访问地址已更新",
+                    false,
+                  )
+                }
+              />
               <section>
                 <h2>服务信息</h2>
                 <p>修改服务器上的 .env 后重启服务，使配置生效。</p>
@@ -1813,10 +2080,7 @@ function App() {
                   {[
                     ["管理地址", state.system.publicUrl],
                     ["游戏主机", state.system.gameHost],
-                    [
-                      "游戏端口范围",
-                      `${state.system.portStart} – ${state.system.portEnd}`,
-                    ],
+                    ["公开资源端口", state.system.publicPort],
                     ["Node.js", state.system.node],
                     ["构建并发", "1（任务顺序执行）"],
                     ["访问控制", "管理员登录 · 12 小时会话"],
@@ -1833,8 +2097,8 @@ function App() {
               <section>
                 <h2>Linux 部署</h2>
                 <p>
-                  游戏产物由平台直接托管。确保防火墙放行对应端口，或为游戏配置独立域名和
-                  HTTPS 反向代理。
+                  所有游戏和 APK 共用公开资源端口，使用子目录区分。HTTPS
+                  反向代理保留原始路径即可。管理后台使用独立端口。
                 </p>
                 <div className="setting-note">
                   <ShieldCheck size={20} />
@@ -1883,6 +2147,8 @@ function App() {
       )}
       {modal?.type === "project" && (
         <ProjectForm
+          projects={projects}
+          system={state.system}
           project={modal.project}
           onClose={() => setModal(null)}
           busy={busy}
@@ -1894,7 +2160,7 @@ function App() {
                   form,
                   modal.project ? "PATCH" : "POST",
                 ),
-              "游戏配置已保存",
+              "项目配置已保存",
             )
           }
         />
@@ -2022,7 +2288,7 @@ function App() {
 }
 function Activity({ events, projects }) {
   const verbs = {
-    created: "接入了游戏",
+    created: "接入了项目",
     updated: "更新了构建配置",
     published: "发布了新版本",
     rollback: "回滚了线上版本",

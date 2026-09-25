@@ -1,5 +1,4 @@
-# Replace example.com. Each game must use its own origin and be served at /.
-# Terminate TLS here before exposing administrator login on the Internet.
+# Add your certificate configuration for HTTPS. Preserve the whole request path.
 server {
     listen 80;
     server_name publish.example.com;
@@ -8,21 +7,18 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 3m;
         proxy_read_timeout 60s;
     }
 }
+# For https://games.xxx.site:8888, terminate TLS on port 8888 in your proxy,
+# then configure that exact origin under Platform Settings.
 server {
     listen 80;
-    server_name zizou.example.com;
-    location / { proxy_pass http://127.0.0.1:8201; proxy_set_header Host $host; }
-}
-server {
-    listen 80;
-    server_name xiangsu.example.com;
-    location / { proxy_pass http://127.0.0.1:8202; proxy_set_header Host $host; }
-}
-server {
-    listen 80;
-    server_name backhome.example.com;
-    location / { proxy_pass http://127.0.0.1:8203; proxy_set_header Host $host; }
+    server_name games.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:8200;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
 }

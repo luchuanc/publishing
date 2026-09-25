@@ -28,9 +28,7 @@ try {
     app.listen(config.port, config.host, resolve);
   });
   console.log(`Launchpad 已启动：${config.publicUrl}`);
-  console.log(
-    `游戏端口：${config.portStart}–${config.portEnd}，数据：${config.dataDir}`,
-  );
+  console.log(`公开资源：${service.publicOrigin()}，数据：${config.dataDir}`);
 } catch (error) {
   console.error(error.message);
   await close(1);

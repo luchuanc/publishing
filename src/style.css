@@ -1777,3 +1777,45 @@ textarea:focus {
     min-height: 36px;
   }
 }
+
+.app-config {
+  border: 1px solid var(--border, #e2e8e6);
+  border-radius: 10px;
+  padding: 18px;
+  display: grid;
+  gap: 15px;
+  min-width: 0;
+}
+.app-config legend {
+  padding: 0 8px;
+  font-weight: 650;
+}
+.icon-preview {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.icon-preview img {
+  border-radius: 12px;
+  object-fit: contain;
+}
+.settings form {
+  display: grid;
+  gap: 12px;
+  margin: 22px 0;
+}
+.settings form button {
+  justify-self: start;
+}
+.settings dd {
+  overflow-wrap: anywhere;
+}
+.settings form label {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-weight: 500;
+}
+.settings form input {
+  width: 100%;
+}

@@ -15,14 +15,13 @@ const json = (res, status, data) => {
   });
   res.end(JSON.stringify(data));
 };
-async function body(req) {
+async function body(req, limit = 16 * 1024) {
   if (!req.headers["content-type"]?.startsWith("application/json"))
     throw new HttpError(415, "请求必须使用 JSON");
   let value = "";
   for await (const chunk of req) {
     value += chunk;
-    if (Buffer.byteLength(value) > 16 * 1024)
-      throw new HttpError(413, "请求过大");
+    if (Buffer.byteLength(value) > limit) throw new HttpError(413, "请求过大");
   }
   try {
     const data = JSON.parse(value || "{}");
@@ -117,6 +116,28 @@ export function createApp(service, config) {
         res.setHeader("Set-Cookie", sessionCookie("", 0));
         return json(res, 200, { ok: true });
       }
+      if (url.pathname === "/api/settings" && req.method === "PATCH")
+        return json(res, 200, service.updateSettings(await body(req)));
+      if (url.pathname === "/api/icons" && req.method === "POST")
+        return json(
+          res,
+          201,
+          await service.uploadIcon(await body(req, 3 * 1024 * 1024)),
+        );
+      const iconMatch = /^\/api\/icons\/([0-9a-f]{64}\.png)$/.exec(
+        url.pathname,
+      );
+      if (
+        iconMatch &&
+        req.method === "GET" &&
+        (await serveFile(
+          req,
+          res,
+          path.join(config.dataDir, "icons"),
+          "/" + iconMatch[1],
+        ))
+      )
+        return;
       if (url.pathname === "/api/state" && req.method === "GET")
         return json(res, 200, service.snapshot());
       if (url.pathname === "/api/projects" && req.method === "POST")

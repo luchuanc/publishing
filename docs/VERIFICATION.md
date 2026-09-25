@@ -1,8 +1,22 @@
 # 验收记录
 
-验证日期：2026-09-25。环境：macOS Intel、Node.js 24.19.0、Chromium；本机提供后台 8080 和游戏 8201–8203。
+以下保留最初版本验收；最新 Android / 单端口验收见本节。
 
-## 自动化与真实构建
+
+## Android 与统一资源端口（2026-09-25）
+
+- 当前本机管理端口 8080，公开资源端口 8200。三个游戏使用 `/zizou/`、`/xiangsu/`、`/backHome/`；APK 与 `/api/catalog` 共用同一端口。
+- 平台语法检查、前端生产构建及 18 项集成测试通过。新增覆盖统一端口路由/路径隔离、域名带端口即时更新、公开目录、PNG 图标、Android 构建配置快照、APK 下载/Range、重复构建、发布回滚、旧游戏产物兼容迁移；旧 15 项能力继续通过。
+- 旧 SQLite 数据和当前/上一版引用保留。升级前本机完整备份 `.data`、`.env`；旧三款游戏产物生成兼容副本，未改写原产物。新旧版本都经过 HTTP 验证，本机重启后版本恢复。
+- Android `h5-app` 从 GitHub `main` 真实克隆并构建了同一发布单的两次 APK，最新提交 `eb52c08`，版本 `1.0.1` / code `2`，10,344,191 字节。新游戏产物同样由平台从 GitHub 拉取构建：zizou `813a815`、xiangsu `4abf296`。
+- 从平台公开链接下载最新 APK，校验 SHA-256：`b3619ff765269262faffa10e7acbebe22b42c86ff8f138af6614c1323b20ff34`。`apksigner verify` 通过（v2 签名）。APK 内包含三个游戏、默认游戏链接、列表 URL 和版本配置。
+- Android Gradle 单元测试通过；Android 15 x86_64 模拟器上的 `GameSelectionTest` 通过：实际 HTTP 列表刷新、选择持久化、地址变更、网络失败保留已选游戏。
+- 模拟器安装、打开选择器、读取三款最新游戏、选择回收站立即进入页面，并强制停止/冷启动后恢复 `game:backHome`。WebView 调试接口确认访问 `/backHome/`。原有直接退出进程导致切换时偶发回桌面的问题已改为重建 Activity 任务；选择器适配系统栏。
+- Playwright 验证三款游戏子目录页面、平台图标上传/预览/恢复默认、生产地址保存、两次 APK 历史与独立日志、下载按钮。相关截图在忽略目录 `output/playwright/` 与 `output/android-tools/`。
+- zizou 生产构建及 33 项测试通过。xiangsu 生产构建和本次相关 14 项资源测试通过；另有 3 项原有 `battle-art-resources.test.ts` 仍使用旧战斗图集夹具，已用未修改的 HEAD 源码复现同样失败，本次未改动该既有测试问题。
+- Linux 新版部署待新的 auto-terminal 临时连接；未将本机结果写作 Linux 部署成功。Docker 配置已改为单资源端口并包含 JDK/SDK，但本次未实机运行 Docker。
+
+## 最初版本：自动化与真实构建
 
 - 平台 `npm run check`、`npm test`、`npm run build` 通过：10 组集成测试，包含真实 Git 克隆与构建、手动发布、回滚和过期状态保护、旧资源请求、失败保留线上版本、取消、重启恢复、排队恢复、归档、权限/CSRF、目录隔离、超时和多实例锁。
 - `zizou`：生产构建通过，原有 33 项测试通过。

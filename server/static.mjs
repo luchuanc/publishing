@@ -4,6 +4,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 
 const mime = {
+  ".apk": "application/vnd.android.package-archive",
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
@@ -31,7 +32,7 @@ export async function serveFile(
   res,
   root,
   pathname,
-  { spa = false, releaseId } = {},
+  { spa = false, releaseId, urlPrefix = "" } = {},
 ) {
   if (!["GET", "HEAD"].includes(req.method)) {
     res.writeHead(405).end();
@@ -67,7 +68,7 @@ export async function serveFile(
     if (info.isDirectory()) {
       res
         .writeHead(308, {
-          Location: pathname.replace(/\/$/, "") + "/",
+          Location: urlPrefix + pathname.replace(/\/$/, "") + "/",
           "Cache-Control": "no-store",
         })
         .end();

@@ -1,12 +1,12 @@
 # Launchpad · 单机游戏打包发布平台
 
-从远端 Git 仓库拉取代码，构建静态游戏，生成固定访问地址，并管理发布和回滚。游戏本身不需要服务端；平台使用 Node.js 管理构建、登录和静态文件托管。
+从远端 Git 仓库拉取代码，构建静态游戏和 Android 调试 APK，生成固定访问/下载地址，并管理发布和回滚。游戏本身不需要服务端；平台使用 Node.js 管理构建、登录和静态文件托管。
 
 ![游戏发布工作台](docs/dashboard.png)
 
 ## 功能
 
-- 默认接入 `zizou`（山海弈）、`xiangsu`（像素远征）、`backHome`（最后一家回收站）。
+- 默认接入 Android `h5-app` 及 `zizou`（山海弈）、`xiangsu`（像素远征）、`backHome`（最后一家回收站）。
 - 项目管理与发布单分离：项目维护仓库、默认分支、命令、产物目录和访问地址，支持归档与恢复。
 - 发布单支持新增、编辑、删除；新建时选择项目，从远端 Git 读取并选择分支。支持按项目、最近构建状态筛选和搜索。
 - 同一发布单可反复构建发布，每次构建记录独立的分支、提交、产物和日志；进入发布单直接查看实时日志、切换历史构建、下载日志。
@@ -14,7 +14,7 @@
 - 构建后自动发布，或仅保存产物后手动发布。
 - 保存历史成功产物，任意版本发布、一键回滚上一版。访问地址固定；发布与回滚记录在 SQLite 事务中一起更新。
 - 失败或取消的构建不影响线上版本；重启后运行中的构建标为失败，排队任务恢复执行。
-- 管理密码、HttpOnly 会话、来源校验、登录失败限流。游戏在独立端口/域名托管，不能访问管理 API。
+- 管理密码、HttpOnly 会话、来源校验、登录失败限流。游戏在与后台分离的统一端口/域名托管，不能访问管理 API。
 
 ## 发布单使用方式
 
@@ -25,7 +25,7 @@
 5. 构建运行中先取消或等待结束，再编辑/删除。产生构建后不能更换所属项目；可以继续修改分支、名称、说明和发布方式。
 6. 含当前线上版本或上一版的发布单不能删除，确保访问与回滚可用。其他发布单删除后从管理界面移除；底层历史产物保留以支持已打开游戏请求旧资源，不作为磁盘清理操作。
 
-已有数据库会在启动时自动迁移，每条历史构建生成一个发布单，原构建编号、日志、访问地址和当前/上一版引用保留。升级前备份 `.data` 和 `.env`，不要在新旧代码之间同时运行同一个数据目录。
+已有数据库会在启动时自动迁移，每条历史构建生成一个发布单，原构建编号、日志和当前/上一版引用保留；游戏地址迁移为统一端口下的项目子目录。升级前备份 `.data` 和 `.env`，不要在新旧代码之间同时运行同一个数据目录。
 
 ## 本机运行
 
@@ -38,18 +38,18 @@ npm run build
 npm start
 ```
 
-`setup` 只在不存在 `.env` 时生成配置，创建随机密码并以权限 0600 保存，不打印密码。用编辑器打开 `.env` 查看 `ADMIN_PASSWORD`，打开 <http://127.0.0.1:8080> 登录。后台默认接入三个游戏，进入“发布单 → 新建发布单”选择项目与分支，创建后点击“构建并发布”。未发布时游戏端口返回 503，首次成功发布后页面显示可用地址。
+`setup` 只在不存在 `.env` 时生成配置，创建随机密码并以权限 0600 保存，不打印密码。用编辑器打开 `.env` 查看 `ADMIN_PASSWORD`，打开 <http://127.0.0.1:8080> 登录。后台默认接入三个游戏和 Android App，进入“发布单 → 新建发布单”选择项目与分支，创建后点击“构建并发布”。未发布时游戏地址返回 503，首次成功发布后页面显示可用地址。
 
 本机默认地址：
 
 | 应用 | 地址 |
 | --- | --- |
 | 发布后台 | `http://127.0.0.1:8080` |
-| 山海弈 | `http://127.0.0.1:8201` |
-| 像素远征 | `http://127.0.0.1:8202` |
-| 最后一家回收站 | `http://127.0.0.1:8203` |
+| 山海弈 | `http://127.0.0.1:8200/zizou/` |
+| 像素远征 | `http://127.0.0.1:8200/xiangsu/` |
+| 最后一家回收站 | `http://127.0.0.1:8200/backHome/` |
 
-首次启动按上述顺序分配端口，新增项目依次分配；端口与游戏标识创建后保持不变。UI 自动轮询，每 2.5 秒更新状态，日志每 1.8 秒更新。
+所有游戏、APK 下载与公开列表共用 `PUBLIC_PORT=8200`。项目标识即子目录，不再为每个游戏分配监听端口。UI 自动轮询，每 2.5 秒更新状态，日志每 1.8 秒更新。
 
 ## Linux：Docker Compose 部署
 
@@ -66,8 +66,7 @@ mkdir -p deploy/ssh
 PUBLIC_URL=http://你的服务器IP:8080
 GAME_PUBLIC_HOST=你的服务器IP
 ADMIN_PASSWORD=替换成至少12位的唯一管理密码
-GAME_PORT_START=8201
-GAME_PORT_END=8299
+PUBLIC_PORT=8200
 ```
 
 GitHub 的 SSH 仓库需要服务器自己的读取权限。将专用 SSH 私钥、配置及**已验证**的 `known_hosts` 放入 `deploy/ssh/`。不需要给服务器推送权限。使用 SSH agent 的本机直接运行方式可沿用现有 SSH 配置；容器不会自动继承宿主机 agent。
@@ -84,17 +83,32 @@ docker compose logs -f publishing
 
 每个 SSH deploy key 通常对应一个仓库。多个仓库可使用具有这些仓库读取权限的专用 GitHub 机器账号，或在 SSH config 中为各仓库配置不同 Host 别名和 IdentityFile，并在平台仓库地址使用对应别名。公有仓库也可改用 `https://github.com/luchuanc/项目名.git`，免 SSH。
 
-容器内构建会执行 `npm ci` 等命令，需要访问 npm 和 GitHub。数据在 `publishing-data` 命名卷，重新构建容器不会删除版本和记录。**不要使用 `docker compose down -v`，它会删除发布数据。** 防火墙放行 8080 和实际使用的游戏端口；同一数据卷只运行一个实例。
+容器内构建会执行 `npm ci` 等命令，需要访问 npm 和 GitHub。数据在 `publishing-data` 命名卷，重新构建容器不会删除版本和记录。**不要使用 `docker compose down -v`，它会删除发布数据。** 防火墙放行管理端口 8080 和统一资源端口 8200；同一数据卷只运行一个实例。
 
-### 独立域名与 HTTPS
+### 统一域名与 HTTPS
 
-提供 `deploy/nginx.conf.example`。将管理后台和每个游戏分别反向代理到自己的端口，全部使用站点根路径 `/`，不要将游戏挂到后台的子路径。游戏已有大量根路径资源，独立 origin 也能隔离 Service Worker、浏览器存档和管理页面。
+提供 `deploy/nginx.conf.example`。所有公开资源只需一个反向代理上游 `http://127.0.0.1:8200`，保留请求完整路径。例如：
 
-- 为后台和游戏配置 DNS 与 HTTPS。
-- `.env` 设置 `PUBLIC_URL=https://publish.example.com`、`COOKIE_SECURE=true`。使用反向代理时设置 `BIND_ADDRESS=127.0.0.1`，避免公网直接访问映射端口。
-- 在每个游戏设置中填写已配置好的独立域名，如 `https://zizou.example.com`。
-- `PUBLIC_URL` 必须和浏览器中的管理地址完全一致，否则修改请求会被来源校验拒绝。配置域名只修改显示地址，不自动创建 DNS 或证书。
-- 上线/回滚后刷新游戏读取新版本；已打开的游戏不会被强制中断。山海弈保留离线缓存，联网时优先读取服务器，离线时读取缓存。PWA 离线能力需要 HTTPS 或 localhost。
+- 游戏：`https://games.xxx.site:8888/xiangsu/`
+- APK：`https://games.xxx.site:8888/downloads/h5-app/<构建ID>/app.apk`
+- 当前发布的 APK：`https://games.xxx.site:8888/downloads/h5-app/latest/app.apk`
+- 公开游戏列表：`https://games.xxx.site:8888/api/catalog`
+
+在「平台设置 → 生产域名」保存 `https://games.xxx.site:8888`，所有游戏地址、历史 APK 下载链接和列表内链接立即更新，无需重建。清空则恢复服务器地址。域名、端口和 HTTPS 证书由反向代理配置，平台不会自动创建 DNS 或证书。管理后台保持不同 origin（例如 `https://publish.xxx.site`），`.env` 的 `PUBLIC_URL` 必须等于浏览器管理地址；HTTPS 后台设置 `COOKIE_SECURE=true`。
+
+升级前备份数据。旧三款游戏的成功产物自动生成子目录兼容副本，原产物保留，因此旧版本也能回滚。浏览器存档属于原 origin；从原游戏端口迁移到新 origin 前，使用游戏自身的导出功能备份玩家存档，平台不会迁移浏览器数据。山海弈离线缓存按游戏路径隔离；PWA 需要 HTTPS 或 localhost。
+
+### Android 调试 APK
+
+已有安装在项目管理中新建 `Android APK`，仓库 `git@github.com:luchuanc/h5-app.git`，构建命令 `sh ./gradlew --no-daemon --console=plain :app:assembleDebug`，产物目录 `app/build/outputs/apk/debug`，安装命令留空。新安装默认包含该项目。
+
+配置 App 名称、PNG 图标、版本号、递增的整数版本代码和默认游戏。游戏链接留空会自动使用所选项目地址，也可覆盖为自定义 HTTP/HTTPS 链接。每次构建固化这些配置与当时游戏列表，日志和产物属于该次构建；成功后在构建历史「下载 APK」。同一发布单可多次构建，发布/回滚会切换 `latest` 下载地址，历史 APK 链接保持对应版本。
+
+App 调试包右上角「游戏」打开 Bundle 选择器，自动读取平台最新已发布游戏；支持手动刷新和修改列表地址。选中后保存游戏 ID 与地址，下次启动自动打开。刷新失败使用缓存列表，游戏本身仍需网络或各自的离线缓存。更新域名时让旧列表入口继续可访问/重定向，新域名会随列表同步；如果旧域名完全停止解析，已安装 App 需手动修改列表地址或安装新 APK。自定义外部地址保持不变。
+
+构建环境需要 [JDK 17、Gradle 8.13](https://developer.android.com/build/releases/agp-8-11-0-release-notes)、Android SDK platform 36 和 build-tools 35.0.0。仓库带 Gradle Wrapper，首次构建下载依赖。Docker 镜像已包含 JDK/SDK；普通用户执行 `sh deploy/install-android-tools.sh`（需要 Node 24、curl、unzip、tar，支持 Linux x64/macOS Intel），将脚本输出的 `JAVA_HOME`、`ANDROID_HOME` 写入 `.env` 后重启。首次构建建议 `BUILD_TIMEOUT_MINUTES=40`。
+
+调试 APK 自动使用运行用户 `~/.android/debug.keystore` 签名。备份此文件以保持覆盖安装兼容；Docker 用独立持久卷保存签名与 Gradle 缓存。图标和版本写在 APK 内，修改后需要重新构建安装；回滚下载链接不会自动降级手机已安装的 App。当前是供直接安装测试的调试包。
 
 ### 不使用 Docker
 
@@ -124,7 +138,7 @@ Node 必须为 24 版本，例如 `/home/your-user/.nvm/versions/node/v24.21.0/b
 | `git@github.com:luchuanc/xiangsu.git` | `npm ci` | `npm run build` | `dist/` |
 | `git@github.com:luchuanc/backHome.git` | 无依赖，留空 | `npm run build` | `dist/` |
 
-新增项目默认构建 `main` 分支，每次克隆这个分支当时的最新提交。分支可以修改，暂不提供 tag/任意 SHA 选择。命令在仓库根目录执行。输出必须在仓库内的独立目录，包含 `index.html`，不能含符号链接、隐藏文件或 `node_modules`。Git 子模块、LFS、非 Node 构建工具暂未自动安装。
+新增项目默认构建 `main` 分支，每次克隆这个分支当时的最新提交。分支可以修改，暂不提供 tag/任意 SHA 选择。命令在仓库根目录执行。输出必须在仓库内的独立目录，包含 `index.html`，不能含符号链接、隐藏文件或 `node_modules`。Web 构建子进程收到 `PUBLISHING_BASE_PATH=/<项目标识>/`；Vite 配置需读取它作为 `base`，动态资源 URL 同样应使用 `import.meta.env.BASE_URL`。Android 产物目录应包含一个 APK。Git 子模块与 LFS 暂未自动安装。
 
 `backHome` 构建同时保留原来的“最后一家回收站.html”离线文件，以及平台需要的 `dist/index.html`。构建产物不提交到游戏仓库，源码及必要资源提交。
 
@@ -132,6 +146,8 @@ Node 必须为 24 版本，例如 `/home/your-user/.nvm/versions/node/v24.21.0/b
 
 - `.data/publishing.sqlite`：项目配置、构建状态、发布事件；启用 WAL。
 - `.data/releases/<构建ID>/`：成功构建产物，每个版本独立目录，不覆盖。
+- `.data/subpath-releases/`：旧三款游戏的子目录兼容副本；原版本文件保留。
+- `.data/icons/`：按内容哈希保存上传图标。
 - `.data/logs/<构建ID>.log`：最多 4 MB 构建日志。
 - `.data/work/`：临时克隆目录，任务结束后清理。
 - 默认保留全部成功版本；没有自动清理或配额，请监控磁盘。不能只删线上产物目录。

@@ -18,6 +18,10 @@ export function buildEnvironment() {
   };
   for (const key of [
     "PATH",
+    "JAVA_HOME",
+    "ANDROID_HOME",
+    "ANDROID_SDK_ROOT",
+    "GRADLE_USER_HOME",
     "HOME",
     "TMPDIR",
     "SSH_AUTH_SOCK",

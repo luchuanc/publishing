@@ -260,7 +260,10 @@ test("archive stops hosting, restore reuses address and versions", async (t) => 
   const b = await build();
   const before = service.address(service.project("demo"));
   await service.archiveProject("demo", true);
-  assert.equal(service.servers.has("demo"), false);
+  assert.equal(
+    (await fetch(service.address(service.project("demo")))).status,
+    503,
+  );
   assert.throws(() => service.enqueue("demo"), /恢复/);
   await service.archiveProject("demo", false);
   assert.equal(service.address(service.project("demo")), before);
@@ -379,7 +382,7 @@ test(
           DATA_DIR: config.dataDir,
           SEED_PROJECTS: "false",
           GAME_PUBLIC_HOST: "127.0.0.1",
-          GAME_PORT_START: String(config.portStart),
+          PUBLIC_PORT: String(config.portStart),
           GAME_PORT_END: String(config.portEnd),
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -690,4 +693,226 @@ test("an old database migrates builds to release orders without changing live re
     2,
   );
   upgraded.close();
+});
+
+test("one public port isolates project paths and domain changes update catalog and addresses", async (t) => {
+  const { service, build, config } = await fixture(t);
+  await build();
+  await service.addProject({ ...base, id: "second", name: "第二个游戏" });
+  const next = service.enqueue("second");
+  await service.work;
+  assert.equal(service.build(next.id).status, "succeeded");
+  const local = service.publicOrigin();
+  assert.equal(
+    new URL(service.address(service.project("demo"))).port,
+    new URL(service.address(service.project("second"))).port,
+  );
+  assert.equal(
+    (await fetch(local + "/demo", { redirect: "manual" })).headers.get(
+      "location",
+    ),
+    "/demo/",
+  );
+  assert.equal((await fetch(local + "/api/state")).status, 404);
+  assert.equal((await fetch(local + "/assets/bundle-abcdefgh.js")).status, 404);
+  assert.equal(
+    (await fetch(local + "/demo/%2e%2e%2fsecond/index.html")).status,
+    404,
+  );
+  assert.equal((await fetch(local + "/demo/", { method: "POST" })).status, 405);
+  assert.throws(
+    () => service.updateSettings({ publicOrigin: config.publicUrl }),
+    /管理后台/,
+  );
+  assert.throws(
+    () =>
+      service.updateSettings({
+        publicOrigin: "https://games.example.com/path",
+      }),
+    /不含游戏路径/,
+  );
+  service.updateSettings({ publicOrigin: "https://games.example.com:8888/" });
+  const catalog = await (await fetch(local + "/api/catalog")).json();
+  assert.equal(
+    catalog.catalogUrl,
+    "https://games.example.com:8888/api/catalog",
+  );
+  assert.deepEqual(
+    catalog.games.map((p) => p.url),
+    [
+      "https://games.example.com:8888/demo/",
+      "https://games.example.com:8888/second/",
+    ],
+  );
+  // The listener and static paths stay available while links change.
+  assert.equal(await (await fetch(local + "/second/")).text(), "version one");
+  await service.archiveProject("second", true);
+  assert.deepEqual(
+    service.catalog().games.map((p) => p.id),
+    ["demo"],
+  );
+  service.updateSettings({ publicOrigin: "" });
+  assert.equal(service.publicOrigin(), local);
+});
+
+test("Android config snapshots, PNG icons, APK downloads, repeat builds and rollback", async (t) => {
+  const { service, build, repo, git, root, config } = await fixture(t);
+  await build();
+  const png = Buffer.alloc(33);
+  Buffer.from("89504e470d0a1a0a", "hex").copy(png);
+  png.write("IHDR", 12);
+  png.writeUInt32BE(512, 16);
+  png.writeUInt32BE(512, 20);
+  const icon = await service.uploadIcon({
+    data: "data:image/png;base64," + png.toString("base64"),
+  });
+  await assert.rejects(
+    service.uploadIcon({ data: "data:image/svg+xml;base64,abcd" }),
+    /PNG/,
+  );
+  const local = service.publicOrigin();
+  await service.addProject({
+    ...base,
+    id: "android",
+    kind: "android",
+    appConfig: {
+      versionName: "2.3.4",
+      versionCode: 23,
+      defaultGameId: "demo",
+      icon: icon.icon,
+    },
+  });
+  await writeFile(
+    path.join(repo, "build.cjs"),
+    `const fs=require('node:fs'); const c=JSON.parse(fs.readFileSync('publishing.json')); if(c.versionName!=='2.3.4'||!c.gameUrl.endsWith('/demo/')||!fs.existsSync('publishing-icon.png'))process.exit(1); fs.mkdirSync('dist');fs.writeFileSync('dist/test.apk',Buffer.concat([Buffer.from('504b0304','hex'),Buffer.from(JSON.stringify(c))]));`,
+  );
+  git("add", ".");
+  git("commit", "-m", "APK fixture");
+  const order = service.addRelease({
+    projectId: "android",
+    branch: "main",
+    title: "测试 APK",
+    autoPublish: false,
+  });
+  const first = service.enqueueRelease(order.id);
+  await service.work;
+  assert.equal(service.build(first.id).status, "succeeded");
+  assert.equal(service.project("android").currentReleaseId, null);
+  const attempt = service.snapshot().builds.find((b) => b.id === first.id);
+  assert.match(attempt.sha256, /^[0-9a-f]{64}$/);
+  assert.equal(attempt.appConfig.versionCode, 23);
+  const apk = await fetch(attempt.downloadUrl);
+  assert.equal(
+    apk.headers.get("content-type"),
+    "application/vnd.android.package-archive",
+  );
+  assert.match(apk.headers.get("content-disposition"), /attachment/);
+  const original = Buffer.from(await apk.arrayBuffer());
+  assert.ok(original.subarray(4).toString().includes("2.3.4"));
+  const partial = await fetch(attempt.downloadUrl, {
+    headers: { Range: "bytes=0-3" },
+  });
+  assert.equal(partial.status, 206);
+  assert.equal(
+    Buffer.from(await partial.arrayBuffer()).toString("hex"),
+    "504b0304",
+  );
+  await service.publish("android", first.id);
+  assert.deepEqual(
+    Buffer.from(
+      await (
+        await fetch(service.address(service.project("android")))
+      ).arrayBuffer(),
+    ),
+    original,
+  );
+  const second = service.enqueueRelease(order.id);
+  await service.work;
+  await service.publish("android", second.id);
+  await service.rollback("android", second.id);
+  assert.equal(service.project("android").currentReleaseId, first.id);
+  service.updateSettings({ publicOrigin: "https://games.example.com:8888" });
+  assert.equal(
+    service.snapshot().builds.find((b) => b.id === first.id).downloadUrl,
+    `https://games.example.com:8888/downloads/android/${first.id}/app.apk`,
+  );
+  assert.equal(
+    service.snapshot().projects.find((p) => p.id === "android").gameUrl,
+    "https://games.example.com:8888/demo/",
+  );
+  assert.equal(
+    service.gameUrl({ gameUrl: local + "/demo/" }),
+    "https://games.example.com:8888/demo/",
+  );
+  assert.equal(
+    service.gameUrl({ gameUrl: "https://external.example.com/game" }),
+    "https://external.example.com/game",
+  );
+  assert.equal((await fetch(local + "/icons/" + icon.icon)).status, 200);
+  assert.equal(
+    (await fetch(local + "/downloads/demo/" + first.id + "/app.apk")).status,
+    404,
+  );
+  await service.archiveProject("android", true);
+  assert.equal((await fetch(attempt.downloadUrl)).status, 404);
+  await assert.rejects(
+    service.updateProject("android", { kind: "web" }),
+    /不能更换类型/,
+  );
+  assert.throws(
+    () => validateProject({ ...base, id: "downloads" }),
+    /保留路径/,
+  );
+  assert.throws(
+    () =>
+      validateProject({
+        ...base,
+        kind: "android",
+        appConfig: { versionCode: -1 },
+      }),
+    /版本代码/,
+  );
+});
+
+test("legacy game releases get subdirectory copies without changing original rollback artifacts", async (t) => {
+  const { service, repo, git, db } = await fixture(t);
+  await writeFile(
+    path.join(repo, "build.cjs"),
+    `const fs=require('node:fs');fs.mkdirSync('dist/assets',{recursive:true});fs.writeFileSync('dist/index.html','<script src="/assets/game.js"></script>');fs.writeFileSync('dist/assets/game.js','function asset(p){return"/"+p};const texture="/assets/hero.png"');fs.writeFileSync('dist/manifest.webmanifest',JSON.stringify({start_url:'/',scope:'/'}));`,
+  );
+  git("add", ".");
+  git("commit", "-m", "old root-based assets");
+  await service.addProject({ ...base, id: "zizou" });
+  const b = service.enqueue("zizou");
+  await service.work;
+  const config = JSON.parse(service.build(b.id).config);
+  delete config.hostingLayout;
+  db.prepare("UPDATE builds SET config=? WHERE id=?").run(
+    JSON.stringify(config),
+    b.id,
+  );
+  const { prepareLegacyReleases } = await import("../server/legacy.mjs");
+  await prepareLegacyReleases(service);
+  const url = service.address(service.project("zizou"));
+  assert.equal(
+    await (await fetch(url)).text(),
+    '<script src="/zizou/assets/game.js"></script>',
+  );
+  assert.equal(
+    await readFile(path.join(service.releaseDir(b.id), "index.html"), "utf8"),
+    '<script src="/assets/game.js"></script>',
+  );
+  assert.equal(
+    await (await fetch(url + "assets/game.js")).text(),
+    'function asset(p){return"/zizou/"+p};const texture="/zizou/assets/hero.png"',
+  );
+  assert.deepEqual(await (await fetch(url + "manifest.webmanifest")).json(), {
+    start_url: "/zizou/",
+    scope: "/zizou/",
+  });
+  await prepareLegacyReleases(service); // retry is idempotent
+  assert.equal(
+    await (await fetch(url)).text(),
+    '<script src="/zizou/assets/game.js"></script>',
+  );
 });

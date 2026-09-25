@@ -43,9 +43,26 @@ export function openStore(dataDir) {
       action TEXT NOT NULL, releaseId TEXT, fromReleaseId TEXT, createdAt TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expiresAt INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
   `);
   // Upgrade existing installations without changing build IDs or live versions.
   transaction(db, () => {
+    const columns = db.prepare("PRAGMA table_info(projects)").all();
+    if (!columns.some((c) => c.name === "kind"))
+      db.exec(
+        "ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'web'",
+      );
+    if (!columns.some((c) => c.name === "appConfig"))
+      db.exec(
+        "ALTER TABLE projects ADD COLUMN appConfig TEXT NOT NULL DEFAULT '{}'",
+      );
+    if (
+      !db
+        .prepare("PRAGMA table_info(builds)")
+        .all()
+        .some((c) => c.name === "sha256")
+    )
+      db.exec("ALTER TABLE builds ADD COLUMN sha256 TEXT");
     if (
       !db
         .prepare("PRAGMA table_info(builds)")

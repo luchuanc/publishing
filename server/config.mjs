@@ -19,16 +19,14 @@ export function configuration(env = process.env) {
     throw new Error(
       "请先运行 npm run setup，或配置至少 12 位的 ADMIN_PASSWORD",
     );
-  const portStart = Number(env.GAME_PORT_START || 8201),
-    portEnd = Number(env.GAME_PORT_END || 8299);
+  const publicPort = Number(env.PUBLIC_PORT || 8200);
   if (
-    ![port, portStart, portEnd].every(
+    ![port, publicPort].every(
       (n) => Number.isInteger(n) && n >= 1024 && n <= 65535,
     ) ||
-    portStart > portEnd ||
-    (port >= portStart && port <= portEnd)
+    port === publicPort
   )
-    throw new Error("后台与游戏端口配置无效或重叠");
+    throw new Error("后台与公开资源端口配置无效或重叠");
   const timeout = Number(env.BUILD_TIMEOUT_MINUTES || 20);
   if (!Number.isFinite(timeout) || timeout < 1 || timeout > 180)
     throw new Error("构建超时应在 1–180 分钟之间");
@@ -39,8 +37,7 @@ export function configuration(env = process.env) {
     gameHost: host,
     password,
     dataDir: path.resolve(env.DATA_DIR || ".data"),
-    portStart,
-    portEnd,
+    publicPort,
     timeoutMs: timeout * 60000,
     secure: env.COOKIE_SECURE === "true" || url.protocol === "https:",
     seed: env.SEED_PROJECTS !== "false",

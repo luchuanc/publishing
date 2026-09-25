@@ -87,6 +87,22 @@ docker compose logs -f publishing
 
 在 Linux 安装 Node 24、Git、OpenSSH，使用专用普通用户运行，执行与本机相同的安装命令。可用 `deploy/publishing.service` 启动 systemd 服务，按实际安装目录与 Node 路径调整。`.env` 的 `HOST=0.0.0.0` 允许外部访问；管理密码与 Git SSH 权限分别配置。
 
+### 只有普通用户权限
+
+如果无法访问 Docker，也没有 systemd 用户服务，服务器已有的 cron 可以托管本应用。先完成 `npm ci`、构建与 `.env` 配置，然后运行：
+
+```sh
+sh deploy/install-user-service.sh /完整路径/node
+```
+
+Node 必须为 24 版本，例如 `/home/your-user/.nvm/versions/node/v24.21.0/bin/node`。安装脚本保留原有用户任务，添加本应用的开机启动和每分钟恢复检查，使用 `flock` 保证只启动一个实例；它不会修改系统用户权限。服务由 cron 启动，因此临时部署终端断开后仍继续运行。
+
+- 日志：`.data/service.log`；进程号：`.data/service.pid`。
+- 停止：删除 `.data/service.enabled`，核对进程号对应本应用后终止该进程。
+- 恢复：创建 `.data/service.enabled`，等待最多一分钟。
+- 更新：拉取代码并重新构建，终止当前服务进程，cron 会在一分钟内恢复。检查 `/healthz` 与游戏访问地址。
+- 完全卸载自启动：在 `crontab -e` 中仅删除 `BEGIN publishing-user-service` 与 `END publishing-user-service` 之间的块，保留其他任务。
+
 ## 游戏接入约定
 
 | 仓库 | 安装 | 构建 | 产物 |

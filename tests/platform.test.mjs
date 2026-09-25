@@ -10,8 +10,8 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
-import { createServer } from "node:net";
+import { execFileSync, spawn } from "node:child_process";
+import { createServer, createConnection } from "node:net";
 import { openStore, acquireInstanceLock } from "../server/store.mjs";
 import { PublishingService, validateProject } from "../server/service.mjs";
 import { createApp } from "../server/app.mjs";
@@ -324,3 +324,87 @@ test("instance lock prevents parallel startup and is reusable after release", as
   const next = acquireInstanceLock(directory);
   next.close();
 });
+
+test(
+  "SIGTERM drains browser preconnects and a fresh process restores the published release",
+  { timeout: 30000 },
+  async (t) => {
+    const { service, config, build } = await fixture(t);
+    const release = await build();
+    assert.equal(release.status, "succeeded");
+    const gameUrl = service.address(service.project("demo"));
+    await service.close();
+    const port = await freePort();
+    const url = `http://127.0.0.1:${port}`;
+    const children = [];
+    t.after(() => {
+      for (const child of children)
+        if (child.exitCode === null) child.kill("SIGKILL");
+    });
+    async function start() {
+      const child = spawn(process.execPath, ["server/index.mjs"], {
+        cwd: new URL("..", import.meta.url),
+        env: {
+          ...process.env,
+          HOST: "127.0.0.1",
+          PORT: String(port),
+          PUBLIC_URL: url,
+          ADMIN_PASSWORD: config.password,
+          DATA_DIR: config.dataDir,
+          SEED_PROJECTS: "false",
+          GAME_PUBLIC_HOST: "127.0.0.1",
+          GAME_PORT_START: String(config.portStart),
+          GAME_PORT_END: String(config.portEnd),
+        },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      children.push(child);
+      let output = "";
+      child.stdout.on("data", (data) => {
+        output += data;
+      });
+      child.stderr.on("data", (data) => {
+        output += data;
+      });
+      child.exited = new Promise((resolve) =>
+        child.once("exit", (code, signal) => resolve({ code, signal })),
+      );
+      for (let attempt = 0; attempt < 100; attempt++) {
+        assert.equal(child.exitCode, null, output);
+        try {
+          const response = await fetch(url + "/healthz", {
+            signal: AbortSignal.timeout(300),
+          });
+          if (response.ok) return child;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      }
+      assert.fail(`Server did not start: ${output}`);
+    }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const child = await start();
+      const response = await fetch(gameUrl);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("x-release-id"), release.id);
+      assert.equal(await response.text(), "version one");
+      // Browsers can leave a TCP preconnection open without sending any HTTP request.
+      // HTTP closeIdleConnections does not necessarily close these sockets.
+      const sockets = await Promise.all(
+        [port, config.portStart].map(async (targetPort) => {
+          const socket = createConnection({
+            host: "127.0.0.1",
+            port: targetPort,
+          });
+          socket.on("error", () => {});
+          await new Promise((resolve) => socket.once("connect", resolve));
+          t.after(() => socket.destroy());
+          return socket;
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      child.kill("SIGTERM");
+      assert.deepEqual(await child.exited, { code: 0, signal: null });
+      for (const socket of sockets) socket.destroy();
+    }
+  },
+);

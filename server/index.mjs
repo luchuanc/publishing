@@ -3,6 +3,7 @@ import { configuration } from "./config.mjs";
 import { openStore, acquireInstanceLock } from "./store.mjs";
 import { PublishingService } from "./service.mjs";
 import { createApp } from "./app.mjs";
+import { closeHttpServer } from "./http-lifecycle.mjs";
 
 const config = configuration();
 await mkdir(config.dataDir, { recursive: true, mode: 0o700 });
@@ -14,8 +15,7 @@ let closing = false;
 async function close(code = 0) {
   if (closing) return;
   closing = true;
-  app.closeIdleConnections();
-  await new Promise((resolve) => app.close(resolve));
+  await closeHttpServer(app);
   await service.close();
   db.close();
   lock.close();

@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { closeHttpServer } from "./http-lifecycle.mjs";
 import { randomUUID } from "node:crypto";
 import {
   mkdir,
@@ -600,14 +601,13 @@ export class PublishingService {
   async closeGame(id) {
     const server = this.servers.get(id);
     if (!server) return;
-    server.closeIdleConnections();
-    await new Promise((resolve) => server.close(resolve));
+    await closeHttpServer(server);
     this.servers.delete(id);
   }
   async close() {
     this.stopping = true;
     this.active?.controller.abort();
     await this.work;
-    for (const id of this.servers.keys()) await this.closeGame(id);
+    await Promise.all([...this.servers.keys()].map((id) => this.closeGame(id)));
   }
 }

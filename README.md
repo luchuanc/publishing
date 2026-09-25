@@ -100,7 +100,7 @@ Node 必须为 24 版本，例如 `/home/your-user/.nvm/versions/node/v24.21.0/b
 - 日志：`.data/service.log`；进程号：`.data/service.pid`。
 - 停止：删除 `.data/service.enabled`，核对进程号对应本应用后终止该进程。
 - 恢复：创建 `.data/service.enabled`，等待最多一分钟。
-- 更新：拉取代码并重新构建，终止当前服务进程，cron 会在一分钟内恢复。检查 `/healthz` 与游戏访问地址。
+- 更新：拉取代码并重新构建，终止当前服务进程，cron 会在下一次每分钟检查时恢复。关闭时先等待正在处理的请求，管理后台和游戏连接各最多等待 5 秒，避免浏览器预连接阻止重启。检查 `/healthz` 与游戏访问地址。
 - 完全卸载自启动：在 `crontab -e` 中仅删除 `BEGIN publishing-user-service` 与 `END publishing-user-service` 之间的块，保留其他任务。
 
 ## 游戏接入约定

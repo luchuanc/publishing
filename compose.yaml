@@ -1,0 +1,24 @@
+services:
+  publishing:
+    build: .
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      PUBLIC_URL: ${PUBLIC_URL:?请在 .env 中设置 PUBLIC_URL}
+      GAME_PUBLIC_HOST: ${GAME_PUBLIC_HOST:?请在 .env 中设置 GAME_PUBLIC_HOST}
+      GAME_PORT_START: ${GAME_PORT_START:-8201}
+      GAME_PORT_END: ${GAME_PORT_END:-8299}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 中设置至少12位管理密码}
+      BUILD_TIMEOUT_MINUTES: ${BUILD_TIMEOUT_MINUTES:-20}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    ports:
+      - "${BIND_ADDRESS:-0.0.0.0}:8080:8080"
+      - "${BIND_ADDRESS:-0.0.0.0}:${GAME_PORT_START:-8201}-${GAME_PORT_END:-8299}:${GAME_PORT_START:-8201}-${GAME_PORT_END:-8299}"
+    volumes:
+      - publishing-data:/app/.data
+      - ${SSH_KEY_DIR:-./deploy/ssh}:/home/node/.ssh:ro
+volumes:
+  publishing-data:

@@ -1,0 +1,28 @@
+# Replace example.com. Each game must use its own origin and be served at /.
+# Terminate TLS here before exposing administrator login on the Internet.
+server {
+    listen 80;
+    server_name publish.example.com;
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 60s;
+    }
+}
+server {
+    listen 80;
+    server_name zizou.example.com;
+    location / { proxy_pass http://127.0.0.1:8201; proxy_set_header Host $host; }
+}
+server {
+    listen 80;
+    server_name xiangsu.example.com;
+    location / { proxy_pass http://127.0.0.1:8202; proxy_set_header Host $host; }
+}
+server {
+    listen 80;
+    server_name backhome.example.com;
+    location / { proxy_pass http://127.0.0.1:8203; proxy_set_header Host $host; }
+}

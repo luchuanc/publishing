@@ -1,0 +1,21 @@
+[Unit]
+Description=Launchpad game publishing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=publishing
+WorkingDirectory=/opt/publishing
+EnvironmentFile=/opt/publishing/.env
+# Ensure /usr/bin/node is Node.js 24; adjust this path for your installation.
+ExecStart=/usr/bin/node server/index.mjs
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

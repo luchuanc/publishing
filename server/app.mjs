@@ -121,12 +121,36 @@ export function createApp(service, config) {
         return json(res, 200, service.snapshot());
       if (url.pathname === "/api/projects" && req.method === "POST")
         return json(res, 201, await service.addProject(await body(req)));
+      if (url.pathname === "/api/releases" && req.method === "POST")
+        return json(res, 201, service.addRelease(await body(req)));
+      let releaseMatch =
+        /^\/api\/releases\/([0-9a-f-]{36})(?:\/(builds))?$/.exec(url.pathname);
+      if (releaseMatch) {
+        const [, id, action] = releaseMatch;
+        if (!action && req.method === "GET")
+          return json(res, 200, {
+            ...service.release(id),
+            builds: service
+              .snapshot()
+              .builds.filter((b) => b.releaseOrderId === id),
+          });
+        if (!action && req.method === "PATCH")
+          return json(res, 200, service.updateRelease(id, await body(req)));
+        if (!action && req.method === "DELETE") {
+          service.deleteRelease(id);
+          return json(res, 200, { ok: true });
+        }
+        if (action === "builds" && req.method === "POST")
+          return json(res, 202, service.enqueueRelease(id));
+      }
       let match =
-        /^\/api\/projects\/([a-zA-Z0-9-]+)(?:\/(builds|rollback|publish|archive))?$/.exec(
+        /^\/api\/projects\/([a-zA-Z0-9-]+)(?:\/(builds|rollback|publish|archive|branches))?$/.exec(
           url.pathname,
         );
       if (match) {
         const [, id, action] = match;
+        if (action === "branches" && req.method === "GET")
+          return json(res, 200, await service.branches(id));
         if (!action && req.method === "PATCH")
           return json(
             res,

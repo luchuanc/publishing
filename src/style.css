@@ -1607,3 +1607,173 @@ input:disabled {
     scroll-behavior: auto !important;
   }
 }
+
+/* Release orders and their immutable build attempts share the existing workspace. */
+textarea {
+  resize: vertical;
+  min-height: 82px;
+  padding: 10px 12px;
+  border: 1px solid #dee2eb;
+  border-radius: 6px;
+  color: #515c76;
+  font: inherit;
+  line-height: 1.7;
+}
+textarea:focus {
+  outline: 2px solid #d8d4ff;
+  border-color: #aaa3f0;
+}
+.branch-feedback {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  font-size: 11px;
+  margin-top: -8px;
+}
+.branch-feedback button {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+.repo-preview {
+  overflow-wrap: anywhere;
+}
+.branch-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.release-table {
+  min-width: 900px;
+}
+.release-table td:first-child {
+  max-width: 300px;
+}
+.release-title {
+  text-align: left;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.release-title svg {
+  flex-shrink: 0;
+}
+.filter-fields {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.filter-fields label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #7f879b;
+  font-size: 11px;
+}
+.filter-fields select {
+  max-width: 190px;
+}
+.release-summary {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr;
+  gap: 24px;
+  padding: 4px 0 24px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+.release-summary > div {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.release-notes {
+  color: #7f879b;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.9;
+  margin: 20px 0;
+}
+.log-selector {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 11px;
+  color: #9299aa;
+}
+.log-selector select {
+  max-width: 370px;
+}
+.inline-log {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.inline-log .log-output {
+  height: 320px;
+  min-height: 180px;
+}
+.inline-log .modal-actions:empty {
+  display: none;
+}
+.log-empty {
+  background: #f1f2f8;
+  border-radius: 8px;
+}
+.build-history-heading {
+  margin-top: 30px;
+}
+.project-config {
+  display: grid;
+  gap: 20px;
+  font-size: 12px;
+}
+.project-config div {
+  display: flex;
+  gap: 20px;
+}
+.project-config dt {
+  width: 80px;
+  color: #9299aa;
+}
+.project-config dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 900px) {
+  .release-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+  .release-filters {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 650px) {
+  .log-selector {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 5px;
+  }
+  .log-selector select {
+    max-width: 235px;
+    font-size: 10px;
+  }
+  .filter-fields {
+    width: 100%;
+    gap: 10px;
+  }
+  .filter-fields label {
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .filter-fields select {
+    width: 100%;
+    max-width: none;
+  }
+  .inline-log .log-output {
+    height: 280px;
+  }
+  .release-table .row-actions button {
+    min-height: 36px;
+  }
+}

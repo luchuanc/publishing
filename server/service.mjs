@@ -133,9 +133,161 @@ export class PublishingService {
     return result;
   }
   build(id) {
-    const result = this.db.prepare("SELECT * FROM builds WHERE id=?").get(id);
+    const result = this.db
+      .prepare(
+        `SELECT b.* FROM builds b LEFT JOIN release_orders r ON r.id=b.releaseOrderId
+      WHERE b.id=? AND r.deletedAt IS NULL`,
+      )
+      .get(id);
     if (!result) fail("构建不存在", 404);
     return result;
+  }
+  release(id) {
+    const result = this.db
+      .prepare("SELECT * FROM release_orders WHERE id=? AND deletedAt IS NULL")
+      .get(id);
+    if (!result) fail("发布单不存在", 404);
+    return result;
+  }
+  async branches(id) {
+    const p = this.project(id);
+    let output = "";
+    const controller = new AbortController();
+    try {
+      await this.executor("git", ["ls-remote", "--heads", "--", p.repo], {
+        cwd: this.config.dataDir,
+        timeoutMs: 20000,
+        signal: controller.signal,
+        log: {
+          write(chunk) {
+            output += String(chunk);
+            if (output.length > 1024 * 1024) controller.abort();
+          },
+        },
+      });
+    } catch {
+      fail(
+        "读取远端分支失败，请检查仓库地址及服务器的 Git 访问权限后重试",
+        502,
+      );
+    }
+    const branches = [
+      ...new Set(
+        output.split(/\r?\n/).flatMap((line) => {
+          const match = /^[0-9a-f]+\s+refs\/heads\/(.+)$/.exec(line);
+          return match ? [match[1]] : [];
+        }),
+      ),
+    ].sort();
+    return { branches, defaultBranch: p.branch };
+  }
+  releaseFields(input) {
+    const p = this.project(String(input.projectId || ""));
+    const branch = validateProject({ ...p, branch: input.branch }).branch;
+    const title = typeof input.title === "string" ? input.title.trim() : "";
+    const notes = typeof input.notes === "string" ? input.notes.trim() : "";
+    if (title.length > 100 || notes.length > 2000)
+      fail("发布单名称最多 100 字符，说明最多 2000 字符");
+    if (
+      input.autoPublish !== undefined &&
+      typeof input.autoPublish !== "boolean" &&
+      ![0, 1].includes(input.autoPublish)
+    )
+      fail("自动发布配置无效");
+    return {
+      projectId: p.id,
+      title: title || `${p.name} · ${branch}`.slice(0, 100),
+      branch,
+      notes,
+      autoPublish:
+        input.autoPublish === undefined ? 1 : Number(!!input.autoPublish),
+    };
+  }
+  addRelease(input) {
+    const r = this.releaseFields(input);
+    if (this.project(r.projectId).archived) fail("请先恢复已归档的项目", 409);
+    const id = randomUUID(),
+      date = now();
+    this.db
+      .prepare(
+        "INSERT INTO release_orders(id,projectId,title,branch,autoPublish,notes,createdAt,updatedAt) VALUES(?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        id,
+        r.projectId,
+        r.title,
+        r.branch,
+        r.autoPublish,
+        r.notes,
+        date,
+        date,
+      );
+    this.event(r.projectId, "release_created", id);
+    return this.release(id);
+  }
+  updateRelease(id, input) {
+    const old = this.release(id);
+    if (
+      this.db
+        .prepare(
+          "SELECT id FROM builds WHERE releaseOrderId=? AND (status IN ('queued','running') OR id=?)",
+        )
+        .get(id, this.active?.id || "")
+    )
+      fail("请等待或取消当前构建后再编辑发布单", 409);
+    if (input.expectedUpdatedAt && input.expectedUpdatedAt !== old.updatedAt)
+      fail("发布单已被修改，请刷新后重试", 409);
+    const r = this.releaseFields({ ...old, ...input });
+    if (
+      r.projectId !== old.projectId &&
+      this.db
+        .prepare("SELECT id FROM builds WHERE releaseOrderId=? LIMIT 1")
+        .get(id)
+    )
+      fail("已有构建记录的发布单不能更换项目，请新建发布单", 409);
+    if (r.projectId !== old.projectId && this.project(r.projectId).archived)
+      fail("请先恢复已归档的项目", 409);
+    this.db
+      .prepare(
+        "UPDATE release_orders SET projectId=?,title=?,branch=?,autoPublish=?,notes=?,updatedAt=? WHERE id=?",
+      )
+      .run(
+        r.projectId,
+        r.title,
+        r.branch,
+        r.autoPublish,
+        r.notes,
+        new Date(
+          Math.max(Date.now(), Date.parse(old.updatedAt) + 1),
+        ).toISOString(),
+        id,
+      );
+    this.event(r.projectId, "release_updated", id);
+    return this.release(id);
+  }
+  deleteRelease(id) {
+    const r = this.release(id);
+    if (
+      this.db
+        .prepare(
+          "SELECT id FROM builds WHERE releaseOrderId=? AND (status IN ('queued','running') OR id=?)",
+        )
+        .get(id, this.active?.id || "")
+    )
+      fail("请先取消或等待构建完成，再删除发布单", 409);
+    if (
+      this.db
+        .prepare(
+          `SELECT b.id FROM builds b JOIN projects p ON p.currentReleaseId=b.id OR p.previousReleaseId=b.id WHERE b.releaseOrderId=?`,
+        )
+        .get(id)
+    )
+      fail("此发布单包含当前线上版本或上一版，暂不能删除", 409);
+    // Retain immutable artifacts for clients that still request older bundles.
+    this.db
+      .prepare("UPDATE release_orders SET deletedAt=?,updatedAt=? WHERE id=?")
+      .run(now(), now(), id);
+    this.event(r.projectId, "release_deleted", id);
   }
   releaseDir(id) {
     return path.join(this.config.dataDir, "releases", id);
@@ -205,9 +357,25 @@ export class PublishingService {
   }
   snapshot() {
     const builds = this.db
-      .prepare("SELECT * FROM builds ORDER BY createdAt DESC, rowid DESC")
+      .prepare(
+        `SELECT b.* FROM builds b LEFT JOIN release_orders r ON r.id=b.releaseOrderId
+        WHERE r.deletedAt IS NULL ORDER BY b.createdAt DESC, b.rowid DESC`,
+      )
       .all()
-      .map(({ config, ...b }) => b);
+      .map(({ config, ...b }) => ({ ...b, branch: JSON.parse(config).branch }));
+    const releases = this.db
+      .prepare(
+        "SELECT * FROM release_orders WHERE deletedAt IS NULL ORDER BY createdAt DESC, rowid DESC",
+      )
+      .all()
+      .map((r) => {
+        const attempts = builds.filter((b) => b.releaseOrderId === r.id);
+        return {
+          ...r,
+          buildCount: attempts.length,
+          latestBuild: attempts[0] || null,
+        };
+      });
     const projects = this.db
       .prepare("SELECT * FROM projects ORDER BY createdAt, id")
       .all()
@@ -221,6 +389,7 @@ export class PublishingService {
     return {
       projects,
       builds,
+      releases,
       events: this.db
         .prepare("SELECT * FROM events ORDER BY id DESC LIMIT 100")
         .all(),
@@ -326,23 +495,42 @@ export class PublishingService {
     if (archived) await this.closeGame(id);
   }
   enqueue(id, autoPublish = true) {
+    // Keep the original endpoint compatible while every new build belongs to an order.
     const p = this.project(id);
+    this.assertBuildAvailable(p);
+    const r = this.addRelease({ projectId: id, branch: p.branch, autoPublish });
+    return this.enqueueRelease(r.id);
+  }
+  assertBuildAvailable(p) {
     if (p.archived) fail("请先恢复已归档的游戏", 409);
-    const buildId = randomUUID();
-    transaction(this.db, () => {
-      if (
-        this.db
-          .prepare(
-            "SELECT id FROM builds WHERE projectId=? AND status IN ('queued','running')",
-          )
-          .get(id)
-      )
-        fail("该游戏已有排队或运行中的构建", 409);
+    if (
       this.db
         .prepare(
-          "INSERT INTO builds(id,projectId,status,config,autoPublish,createdAt) VALUES(?,?,'queued',?,?,?)",
+          "SELECT id FROM builds WHERE projectId=? AND status IN ('queued','running')",
         )
-        .run(buildId, id, JSON.stringify(p), autoPublish ? 1 : 0, now());
+        .get(p.id)
+    )
+      fail("该游戏已有排队或运行中的构建", 409);
+    if (this.stopping) fail("平台正在关闭，请稍后重试", 503);
+  }
+  enqueueRelease(id) {
+    const r = this.release(id);
+    const p = this.project(r.projectId);
+    const buildId = randomUUID();
+    transaction(this.db, () => {
+      this.assertBuildAvailable(p);
+      this.db
+        .prepare(
+          "INSERT INTO builds(id,projectId,status,config,autoPublish,createdAt,releaseOrderId) VALUES(?,?,'queued',?,?,?,?)",
+        )
+        .run(
+          buildId,
+          p.id,
+          JSON.stringify({ ...p, branch: r.branch }),
+          r.autoPublish,
+          now(),
+          r.id,
+        );
     });
     this.kick();
     return this.build(buildId);
@@ -509,6 +697,7 @@ export class PublishingService {
       fail("版本产物丢失，请重新构建", 409);
     if (!this.servers.has(projectId)) await this.listenGame(p);
     transaction(this.db, () => {
+      this.build(releaseId); // A release order may have been deleted while awaiting the artifact.
       const fresh = this.project(projectId);
       if (
         expectedCurrent !== undefined &&

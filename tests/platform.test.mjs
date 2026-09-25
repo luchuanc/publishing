@@ -34,6 +34,32 @@ async function freePort() {
   await new Promise((resolve) => server.close(resolve));
   return port;
 }
+async function freeGameRange() {
+  // Keep game listeners outside the OS ephemeral range used by HTTP clients.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const port = 20000 + Math.floor(Math.random() * 10000);
+    const reserved = [];
+    try {
+      for (let offset = 0; offset < 6; offset++) {
+        const server = createServer();
+        reserved.push(server);
+        await new Promise((resolve, reject) => {
+          server.once("error", reject);
+          server.listen(port + offset, "127.0.0.1", resolve);
+        });
+      }
+      return port;
+    } catch {
+    } finally {
+      await Promise.all(
+        reserved.map(
+          (server) => new Promise((resolve) => server.close(resolve)),
+        ),
+      );
+    }
+  }
+  throw new Error("No available game port range");
+}
 async function fixture(t) {
   const root = await mkdtemp(path.join(tmpdir(), "publishing-test-"));
   const repo = path.join(root, "source");
@@ -50,7 +76,7 @@ async function fixture(t) {
   await writeFile(path.join(repo, "page.html"), "version one");
   git("add", ".");
   git("commit", "-m", "first");
-  const port = await freePort();
+  const port = await freeGameRange();
   const config = {
     dataDir: path.join(root, "data"),
     host: "127.0.0.1",
@@ -408,3 +434,260 @@ test(
     }
   },
 );
+
+test("release orders select remote branches and preserve multiple builds and logs", async (t) => {
+  const { service, repo, git, config } = await fixture(t);
+  git("checkout", "-b", "release/update");
+  await writeFile(path.join(repo, "page.html"), "branch update");
+  git("add", ".");
+  git("commit", "-m", "branch update");
+  git("checkout", "main");
+  assert.deepEqual((await service.branches("demo")).branches, [
+    "main",
+    "release/update",
+  ]);
+  const order = service.addRelease({
+    projectId: "demo",
+    branch: "main",
+    title: "内容更新",
+    notes: "首次发布",
+    autoPublish: false,
+  });
+  assert.equal(service.snapshot().releases[0].buildCount, 0);
+  const first = service.enqueueRelease(order.id);
+  assert.throws(
+    () => service.updateRelease(order.id, { notes: "running" }),
+    /等待或取消/,
+  );
+  assert.throws(() => service.deleteRelease(order.id), /等待构建完成/);
+  assert.throws(() => service.enqueueRelease(order.id), /已有/);
+  await service.work;
+  assert.equal(service.build(first.id).status, "succeeded");
+  assert.equal(service.project("demo").currentReleaseId, null);
+  await service.publish("demo", first.id);
+  const firstLog = await readFile(
+    path.join(config.dataDir, "logs", `${first.id}.log`),
+    "utf8",
+  );
+  service.updateRelease(order.id, {
+    branch: "release/update",
+    autoPublish: true,
+    title: "内容更新第二轮",
+    notes: "分支更新",
+  });
+  const second = service.enqueueRelease(order.id);
+  await service.work;
+  assert.notEqual(first.id, second.id);
+  assert.equal(service.build(second.id).status, "succeeded");
+  assert.notEqual(
+    service.build(first.id).commitHash,
+    service.build(second.id).commitHash,
+  );
+  assert.equal(service.project("demo").branch, "main");
+  assert.equal(service.project("demo").currentReleaseId, second.id);
+  assert.equal(
+    await (await fetch(service.address(service.project("demo")))).text(),
+    "branch update",
+  );
+  assert.equal(
+    await readFile(
+      path.join(config.dataDir, "logs", `${first.id}.log`),
+      "utf8",
+    ),
+    firstLog,
+  );
+  assert.match(
+    await readFile(
+      path.join(config.dataDir, "logs", `${second.id}.log`),
+      "utf8",
+    ),
+    /release\/update/,
+  );
+  const snapshot = service.snapshot();
+  assert.equal(snapshot.releases[0].buildCount, 2);
+  assert.deepEqual(
+    snapshot.builds.map((b) => b.branch),
+    ["release/update", "main"],
+  );
+  assert.throws(() => service.deleteRelease(order.id), /当前线上版本或上一版/);
+  await service.rollback("demo", second.id);
+  assert.equal(
+    await (await fetch(service.address(service.project("demo")))).text(),
+    "version one",
+  );
+  await service.addProject({ ...base, id: "another", name: "另一个项目" });
+  assert.throws(
+    () => service.updateRelease(order.id, { projectId: "another" }),
+    /不能更换项目/,
+  );
+});
+
+test("release APIs support authenticated create, edit, details, build and delete", async (t) => {
+  const { service, url, config } = await fixture(t);
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Publishing-Request": "1",
+    Origin: config.publicUrl,
+  };
+  const login = await fetch(url + "/api/login", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ password: config.password }),
+  });
+  headers.Cookie = login.headers.get("set-cookie").split(";")[0];
+  const request = (route, method = "GET", body) =>
+    fetch(url + "/api" + route, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  assert.equal((await fetch(url + "/api/projects/demo/branches")).status, 401);
+  const branches = await request("/projects/demo/branches");
+  assert.deepEqual((await branches.json()).branches, ["main"]);
+  const created = await request("/releases", "POST", {
+    projectId: "demo",
+    branch: "main",
+  });
+  assert.equal(created.status, 201);
+  const order = await created.json();
+  const updated = await request(`/releases/${order.id}`, "PATCH", {
+    title: "计划发布",
+    notes: "可编辑",
+  });
+  assert.equal(updated.status, 200);
+  assert.equal((await updated.json()).title, "计划发布");
+  assert.equal(
+    (await request(`/releases/${order.id}`, "PATCH", { branch: "--bad" }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(`/releases/${order.id}`, "PATCH", {
+        expectedUpdatedAt: "stale",
+        title: "旧页面修改",
+      })
+    ).status,
+    409,
+  );
+  const detail = await request(`/releases/${order.id}`);
+  assert.equal((await detail.json()).builds.length, 0);
+  const noCsrf = await fetch(url + `/api/releases/${order.id}`, {
+    method: "DELETE",
+    headers: { Cookie: headers.Cookie },
+  });
+  assert.equal(noCsrf.status, 403);
+  await service.updateProject("demo", { buildCommand: "exit 42" });
+  const built = await request(`/releases/${order.id}/builds`, "POST", {});
+  assert.equal(built.status, 202);
+  const build = await built.json();
+  await service.work;
+  const after = await (await request(`/releases/${order.id}`)).json();
+  assert.equal(after.builds[0].status, "failed");
+  assert.equal((await request(`/builds/${build.id}/log`)).status, 200);
+  assert.equal((await request(`/releases/${order.id}`, "DELETE")).status, 200);
+  assert.equal((await request(`/releases/${order.id}`)).status, 404);
+  assert.equal((await request(`/builds/${build.id}/log`)).status, 404);
+  assert.equal(
+    (await request(`/releases/${order.id}/builds`, "POST", {})).status,
+    404,
+  );
+  assert.equal(service.snapshot().releases.length, 0);
+  assert.equal(service.snapshot().builds.length, 0);
+});
+
+test("deleting an older release order preserves live versions and prevents an in-flight publish", async (t) => {
+  const { service, build } = await fixture(t);
+  const first = await build();
+  const second = await build();
+  const third = await build();
+  assert.throws(() => service.deleteRelease(second.releaseOrderId), /上一版/);
+  const pending = service.publish("demo", first.id);
+  service.deleteRelease(first.releaseOrderId);
+  await assert.rejects(pending, /构建不存在/);
+  assert.equal(service.project("demo").currentReleaseId, third.id);
+  assert.equal(service.project("demo").previousReleaseId, second.id);
+  assert.ok(!service.snapshot().builds.some((b) => b.id === first.id));
+  assert.equal(
+    await readFile(
+      path.join(service.releaseDir(first.id), "index.html"),
+      "utf8",
+    ),
+    "version one",
+  );
+  await service.rollback("demo", third.id);
+  assert.equal(service.project("demo").currentReleaseId, second.id);
+});
+
+test("an old database migrates builds to release orders without changing live references", async (t) => {
+  const { DatabaseSync } = await import("node:sqlite");
+  const root = await mkdtemp(path.join(tmpdir(), "publishing-migration-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const legacy = new DatabaseSync(path.join(root, "publishing.sqlite"));
+  legacy.exec(`CREATE TABLE projects(id TEXT PRIMARY KEY,name TEXT,repo TEXT,branch TEXT,installCommand TEXT,buildCommand TEXT,outputDir TEXT,port INTEGER,publicUrl TEXT,createdAt TEXT,currentReleaseId TEXT,previousReleaseId TEXT,archived INTEGER);
+    CREATE TABLE builds(id TEXT PRIMARY KEY,projectId TEXT,status TEXT,config TEXT,autoPublish INTEGER,createdAt TEXT,startedAt TEXT,finishedAt TEXT,commitHash TEXT,commitMessage TEXT,error TEXT,sizeBytes INTEGER,publishedAt TEXT);`);
+  legacy
+    .prepare("INSERT INTO projects VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(
+      "demo",
+      "测试游戏",
+      base.repo,
+      "main",
+      "",
+      "node build.cjs",
+      "dist",
+      18201,
+      "",
+      "2026-01-01",
+      "build-b",
+      "build-a",
+      0,
+    );
+  for (const [id, branch] of [
+    ["build-a", "main"],
+    ["build-b", "release/update"],
+  ]) {
+    legacy
+      .prepare(
+        "INSERT INTO builds(id,projectId,status,config,autoPublish,createdAt) VALUES(?,'demo','succeeded',?,1,'2026-01-01')",
+      )
+      .run(id, JSON.stringify({ ...base, branch }));
+  }
+  legacy.close();
+  let upgraded = openStore(root);
+  assert.equal(
+    upgraded.prepare("SELECT count(*) n FROM release_orders").get().n,
+    2,
+  );
+  assert.equal(
+    upgraded
+      .prepare("SELECT releaseOrderId FROM builds WHERE id='build-b'")
+      .get().releaseOrderId,
+    "build-b",
+  );
+  assert.equal(
+    upgraded
+      .prepare("SELECT branch FROM release_orders WHERE id='build-b'")
+      .get().branch,
+    "release/update",
+  );
+  assert.equal(
+    upgraded
+      .prepare("SELECT currentReleaseId FROM projects WHERE id='demo'")
+      .get().currentReleaseId,
+    "build-b",
+  );
+  assert.equal(
+    upgraded
+      .prepare("SELECT previousReleaseId FROM projects WHERE id='demo'")
+      .get().previousReleaseId,
+    "build-a",
+  );
+  upgraded.close();
+  upgraded = openStore(root);
+  assert.equal(
+    upgraded.prepare("SELECT count(*) n FROM release_orders").get().n,
+    2,
+  );
+  upgraded.close();
+});

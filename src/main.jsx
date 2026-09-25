@@ -34,6 +34,8 @@ import {
   XCircle,
   Archive,
   Menu,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import "./style.css";
 
@@ -74,6 +76,7 @@ const duration = (b) =>
     ? `${Math.max(0, Math.round(((b.finishedAt ? new Date(b.finishedAt).getTime() : Date.now()) - new Date(b.startedAt).getTime()) / 1000))}s`
     : "—";
 const labels = {
+  draft: "未构建",
   queued: "排队中",
   running: "构建中",
   succeeded: "构建成功",
@@ -81,6 +84,7 @@ const labels = {
   cancelled: "已取消",
 };
 const icons = {
+  draft: Circle,
   queued: Clock3,
   running: Loader2,
   succeeded: CheckCircle2,
@@ -230,8 +234,8 @@ function ProjectForm({ project, onSave, onClose, busy }) {
   );
   return (
     <Modal
-      title={project ? "游戏设置" : "接入新游戏"}
-      subtitle="连接 Git 仓库，配置构建与发布。"
+      title={project ? "项目设置" : "新建项目"}
+      subtitle="配置仓库、构建命令与游戏访问地址。发布时在发布单中选择分支。"
       onClose={onClose}
     >
       <form
@@ -261,7 +265,7 @@ function ProjectForm({ project, onSave, onClose, busy }) {
             required: true,
           })}
           <div className="form-grid">
-            {field("branch", "构建分支", "main", { required: true })}
+            {field("branch", "默认分支", "main", { required: true })}
             {field("outputDir", "产物目录", "dist", { required: true })}
           </div>
           {field("installCommand", "依赖安装命令", "npm ci（无依赖可留空）")}
@@ -299,15 +303,68 @@ function ProjectForm({ project, onSave, onClose, busy }) {
     </Modal>
   );
 }
-function BuildForm({ projects, initialId, busy, onSave, onClose }) {
-  const [id, setId] = useState(initialId || projects[0]?.id || ""),
-    [autoPublish, setAutoPublish] = useState(true),
-    [error, setError] = useState("");
-  const p = projects.find((p) => p.id === id);
+function ReleaseForm({ projects, release, initialId, busy, onSave, onClose }) {
+  const [form, setForm] = useState({
+    projectId:
+      release?.projectId ||
+      initialId ||
+      projects.find((p) => !p.archived)?.id ||
+      "",
+    branch: release?.branch || "",
+    title: release?.title || "",
+    notes: release?.notes || "",
+    autoPublish: release ? !!release.autoPublish : true,
+  });
+  const [branches, setBranches] = useState([]),
+    [loading, setLoading] = useState(true),
+    [branchError, setBranchError] = useState(""),
+    [error, setError] = useState(""),
+    [reload, setReload] = useState(0);
+  const p = projects.find((p) => p.id === form.projectId);
+  useEffect(() => {
+    let stopped = false;
+    setBranches([]);
+    setLoading(true);
+    setBranchError("");
+    if (!form.projectId) {
+      setLoading(false);
+      return;
+    }
+    api(`/projects/${form.projectId}/branches`)
+      .then((result) => {
+        if (stopped) return;
+        setBranches(result.branches);
+        setForm((old) => ({
+          ...old,
+          branch:
+            old.branch ||
+            (result.branches.includes(result.defaultBranch)
+              ? result.defaultBranch
+              : result.branches[0] || ""),
+        }));
+        if (!result.branches.length)
+          setBranchError("远端仓库没有分支，请先提交代码。");
+      })
+      .catch((e) => {
+        if (!stopped) setBranchError(e.message);
+      })
+      .finally(() => {
+        if (!stopped) setLoading(false);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [form.projectId, reload]);
+  const branchValid = branches.includes(form.branch);
+  // Metadata remains editable if an existing order's branch was deleted remotely.
+  const unchangedBranch =
+    release &&
+    release.projectId === form.projectId &&
+    release.branch === form.branch;
   return (
     <Modal
-      title="新增打包"
-      subtitle="拉取所选分支的最新代码，创建一个独立版本。"
+      title={release ? "编辑发布单" : "新建发布单"}
+      subtitle="选择项目与远端分支。一个发布单可以多次构建，每次日志单独保存。"
       onClose={onClose}
     >
       <form
@@ -315,7 +372,7 @@ function BuildForm({ projects, initialId, busy, onSave, onClose }) {
           e.preventDefault();
           setError("");
           try {
-            await onSave(id, autoPublish);
+            await onSave({ ...form, expectedUpdatedAt: release?.updatedAt });
           } catch (e) {
             setError(e.message);
           }
@@ -323,48 +380,111 @@ function BuildForm({ projects, initialId, busy, onSave, onClose }) {
       >
         <div className="form-body">
           <label>
-            选择游戏
-            <select value={id} onChange={(e) => setId(e.target.value)} required>
-              {projects.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name} / {p.id}
+            发布单名称（可选）
+            <input
+              maxLength={100}
+              value={form.title}
+              placeholder="例如：九月内容更新"
+              onChange={(e) => setForm({ ...form, title: e.target.value })}
+            />
+          </label>
+          <label>
+            选择项目
+            <select
+              required
+              value={form.projectId}
+              disabled={busy || !!release?.buildCount}
+              onChange={(e) =>
+                setForm({ ...form, projectId: e.target.value, branch: "" })
+              }
+            >
+              <option value="" disabled>
+                请选择项目
+              </option>
+              {projects
+                .filter((p) => !p.archived || p.id === release?.projectId)
+                .map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} / {p.id}
+                    {p.archived ? "（已归档）" : ""}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            构建分支
+            <select
+              required
+              value={form.branch}
+              disabled={loading || busy}
+              onChange={(e) => setForm({ ...form, branch: e.target.value })}
+            >
+              <option value="" disabled>
+                {loading ? "正在读取远端分支…" : "请选择远端分支"}
+              </option>
+              {!!form.branch && !branchValid && (
+                <option value={form.branch} disabled>
+                  {form.branch}
+                  {loading ? "（读取中）" : "（远端不存在或未读取）"}
+                </option>
+              )}
+              {branches.map((b) => (
+                <option key={b} value={b}>
+                  {b}
                 </option>
               ))}
             </select>
           </label>
-          {p && (
-            <div className="build-summary">
-              <span>
-                <GitBranch size={15} />
-                {p.branch}
-              </span>
-              <code>{p.repo}</code>
-              <div>
-                <small>构建命令</small>
-                <code>{p.buildCommand}</code>
-              </div>
-              <div>
-                <small>产物目录</small>
-                <code>{p.outputDir}/</code>
-              </div>
-            </div>
-          )}
+          <div className="branch-feedback">
+            <span
+              role={branchError ? "alert" : undefined}
+              className={branchError ? "error-text" : "muted"}
+            >
+              {branchError ||
+                (loading
+                  ? "连接项目仓库…"
+                  : `已读取 ${branches.length} 个远端分支`)}
+            </span>
+            <button
+              type="button"
+              disabled={loading || busy || !form.projectId}
+              onClick={() => setReload((n) => n + 1)}
+            >
+              <RotateCcw size={13} />
+              刷新分支
+            </button>
+          </div>
+          {p && <p className="help repo-preview">{p.repo}</p>}
+          <label>
+            发布说明
+            <textarea
+              maxLength={2000}
+              rows={3}
+              placeholder="记录本次更新内容或发布备注"
+              value={form.notes}
+              onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            />
+          </label>
           <label className="checkbox">
             <input
               type="checkbox"
-              checked={autoPublish}
-              onChange={(e) => setAutoPublish(e.target.checked)}
+              checked={form.autoPublish}
+              onChange={(e) =>
+                setForm({ ...form, autoPublish: e.target.checked })
+              }
             />
             <span>
               <strong>构建成功后自动发布</strong>
-              <small>关闭后只保存产物，可在版本记录中手动发布。</small>
+              <small>关闭后保留产物，在发布单内手动发布。</small>
             </span>
           </label>
-          {p?.currentReleaseId && (
-            <p className="help">当前线上版本继续提供访问，成功发布后可回滚。</p>
+          {!!release?.buildCount && (
+            <p className="help">
+              分支和发布方式的修改仅用于后续构建；历史提交、日志与产物保持不变。
+            </p>
           )}
           {error && (
-            <p role="alert" className="error-text">
+            <p className="error-text" role="alert">
               {error}
             </p>
           )}
@@ -373,22 +493,36 @@ function BuildForm({ projects, initialId, busy, onSave, onClose }) {
           <button type="button" onClick={onClose}>
             取消
           </button>
-          <button className="primary" disabled={busy || !id}>
-            <Package size={16} />
-            开始打包
+          <button
+            className="primary"
+            disabled={
+              busy ||
+              loading ||
+              !form.projectId ||
+              (!branchValid && !unchangedBranch)
+            }
+          >
+            {busy ? (
+              <Loader2 className="spin" size={16} />
+            ) : (
+              <Check size={16} />
+            )}
+            {release ? "保存修改" : "创建发布单"}
           </button>
         </div>
       </form>
     </Modal>
   );
 }
-function BuildLog({ build, project, onClose, onCancel }) {
+function BuildLog({ build, project, onClose, onCancel, inline = false }) {
   const [text, setText] = useState(""),
     [error, setError] = useState(""),
     [follow, setFollow] = useState(true);
   const logRef = useRef();
   useEffect(() => {
     let stopped = false;
+    setText("");
+    setError("");
     async function load() {
       try {
         const result = await api(`/builds/${build.id}/log`);
@@ -401,12 +535,12 @@ function BuildLog({ build, project, onClose, onCancel }) {
       }
     }
     void load();
-    const timer = setInterval(load, 1800);
+    const timer = active(build) ? setInterval(load, 1800) : null;
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, [build.id]);
+  }, [build.id, build.status]);
   useEffect(() => {
     if (follow && logRef.current)
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -419,13 +553,8 @@ function BuildLog({ build, project, onClose, onCancel }) {
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
-  return (
-    <Modal
-      wide
-      title="构建日志"
-      subtitle={`${project.name} · ${short(build.id)} · ${time(build.createdAt)}`}
-      onClose={onClose}
-    >
+  const content = (
+    <>
       <div className="log-toolbar">
         <Status build={build} />
         <code>{short(build.commitHash)}</code>
@@ -459,8 +588,22 @@ function BuildLog({ build, project, onClose, onCancel }) {
             取消构建
           </button>
         )}
-        <button onClick={onClose}>关闭日志</button>
+        {!inline && <button onClick={onClose}>关闭日志</button>}
       </div>
+    </>
+  );
+  return inline ? (
+    <section className="inline-log" aria-label="打包日志">
+      {content}
+    </section>
+  ) : (
+    <Modal
+      wide
+      title="构建日志"
+      subtitle={`${project.name} · ${short(build.id)} · ${time(build.createdAt)}`}
+      onClose={onClose}
+    >
+      {content}
     </Modal>
   );
 }
@@ -469,6 +612,10 @@ function App() {
     [state, setState] = useState(null),
     [page, setPage] = useState("games"),
     [selected, setSelected] = useState(null),
+    [releaseId, setReleaseId] = useState(null),
+    [logBuildId, setLogBuildId] = useState(null),
+    [releaseProject, setReleaseProject] = useState("all"),
+    [releaseStatus, setReleaseStatus] = useState("all"),
     [query, setQuery] = useState(""),
     [filter, setFilter] = useState("all"),
     [modal, setModal] = useState(null),
@@ -547,6 +694,12 @@ function App() {
     );
   const projects = state?.projects || [],
     builds = state?.builds || [],
+    releases = state?.releases || [],
+    release = releases.find((r) => r.id === releaseId),
+    releaseBuilds = builds.filter((b) => b.releaseOrderId === releaseId),
+    releaseProjectData = projects.find((p) => p.id === release?.projectId),
+    logBuild =
+      releaseBuilds.find((b) => b.id === logBuildId) || releaseBuilds[0],
     available = projects.filter((p) => !p.archived),
     project = projects.find((p) => p.id === selected);
   const filtered = projects.filter(
@@ -556,23 +709,60 @@ function App() {
       (filter !== "unpublished" || !p.currentReleaseId) &&
       `${p.name} ${p.id} ${p.repo}`.toLowerCase().includes(query.toLowerCase()),
   );
-  const projectBuilds = project
-    ? builds.filter((b) => b.projectId === project.id)
-    : builds;
   const runningCount = builds.filter(active).length;
-  const title = project
-    ? project.name
-    : {
-        games: "游戏项目",
-        builds: "构建记录",
-        activity: "发布动态",
-        settings: "平台设置",
-      }[page];
+  const title = release
+    ? release.title
+    : project
+      ? project.name
+      : {
+          games: "项目管理",
+          builds: "发布单",
+          activity: "发布动态",
+          settings: "平台设置",
+        }[page];
   const confirm = (type, p, build) => setModal({ type, project: p, build });
-  const newBuild = (id) => setModal({ type: "build", id });
+  const newRelease = (id) =>
+    setModal({
+      type: "release",
+      id: id || (releaseProject === "all" ? undefined : releaseProject),
+    });
+  function openRelease(id) {
+    setPage("builds");
+    setSelected(null);
+    setReleaseId(id);
+    setLogBuildId(null);
+    setMobileNav(false);
+  }
+  function viewProjectReleases(id) {
+    navigate("builds");
+    setReleaseProject(id);
+  }
+  async function startRelease(id) {
+    const b = await act(() => send(`/releases/${id}/builds`), "构建已加入队列");
+    if (b) {
+      openRelease(id);
+      setLogBuildId(b.id);
+    }
+  }
+  const projectBusy = (id) =>
+    busy || builds.some((b) => b.projectId === id && active(b));
+  const protectedRelease = (r) =>
+    builds.some(
+      (b) =>
+        b.releaseOrderId === r.id &&
+        projects.some(
+          (p) => p.currentReleaseId === b.id || p.previousReleaseId === b.id,
+        ),
+    );
+  const showLog = (b) =>
+    release ? setLogBuildId(b.id) : setModal({ type: "log", id: b.id });
   function navigate(value) {
     setPage(value);
     setSelected(null);
+    setReleaseId(null);
+    setLogBuildId(null);
+    setReleaseProject("all");
+    setReleaseStatus("all");
     setQuery("");
     setMobileNav(false);
   }
@@ -582,9 +772,9 @@ function App() {
         <table className="build-table">
           <thead>
             <tr>
-              <th>构建 / 游戏</th>
+              <th>构建编号</th>
               <th>状态</th>
-              <th>提交</th>
+              <th>分支 / 提交</th>
               <th>时间 / 耗时</th>
               <th>产物</th>
               <th className="right">操作</th>
@@ -598,7 +788,7 @@ function App() {
                   <td>
                     <button
                       className="text-button dark"
-                      onClick={() => setModal({ type: "log", id: b.id })}
+                      onClick={() => showLog(b)}
                     >
                       <Package size={16} />
                       <strong>{short(b.id)}</strong>
@@ -614,7 +804,13 @@ function App() {
                     )}
                   </td>
                   <td>
-                    <code>{short(b.commitHash)}</code>
+                    <span className="branch-name">
+                      <GitBranch size={12} />
+                      {b.branch}
+                    </span>
+                    <small className="cell-sub">
+                      <code>{short(b.commitHash)}</code>
+                    </small>
                   </td>
                   <td>
                     {time(b.createdAt)}
@@ -623,11 +819,7 @@ function App() {
                   <td>{size(b.sizeBytes)}</td>
                   <td>
                     <div className="row-actions">
-                      <button
-                        onClick={() => setModal({ type: "log", id: b.id })}
-                      >
-                        日志
-                      </button>
+                      <button onClick={() => showLog(b)}>日志</button>
                       {b.status === "succeeded" &&
                         p?.currentReleaseId !== b.id &&
                         !p?.archived && (
@@ -637,7 +829,12 @@ function App() {
                         )}
                       {["failed", "cancelled"].includes(b.status) &&
                         !p?.archived && (
-                          <button onClick={() => newBuild(p.id)}>重试</button>
+                          <button
+                            disabled={projectBusy(p.id)}
+                            onClick={() => startRelease(b.releaseOrderId)}
+                          >
+                            重新构建
+                          </button>
                         )}
                       {active(b) && (
                         <button
@@ -663,13 +860,133 @@ function App() {
           <div className="empty">
             <Package size={32} />
             <h3>还没有构建记录</h3>
-            <p>从远端仓库打包你的第一个游戏版本。</p>
+            <p>每次构建的提交、产物和日志会保存在这里。</p>
             <button
-              onClick={() => newBuild(project?.id)}
+              onClick={() =>
+                release ? startRelease(release.id) : newRelease(project?.id)
+              }
               disabled={!available.length}
             >
               <Plus size={15} />
-              新增打包
+              新建发布单
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+  function releaseTable(rows) {
+    return (
+      <div className="table-scroll">
+        <table className="release-table">
+          <thead>
+            <tr>
+              <th>发布单</th>
+              <th>项目 / 分支</th>
+              <th>最近构建</th>
+              <th>创建时间</th>
+              <th className="right">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const p = projects.find((p) => p.id === r.projectId);
+              const protectedOrder = protectedRelease(r);
+              return (
+                <tr key={r.id}>
+                  <td>
+                    <button
+                      className="text-button dark release-title"
+                      onClick={() => openRelease(r.id)}
+                    >
+                      <Package size={16} />
+                      <strong>{r.title}</strong>
+                    </button>
+                    <small className="cell-sub">
+                      {short(r.id)} · {r.buildCount} 次构建 ·{" "}
+                      {r.autoPublish ? "自动发布" : "手动发布"}
+                    </small>
+                  </td>
+                  <td>
+                    {p?.name}
+                    <small className="cell-sub branch">
+                      <GitBranch size={12} />
+                      {r.branch}
+                    </small>
+                  </td>
+                  <td>
+                    <Status build={r.latestBuild || { status: "draft" }} />
+                    {r.latestBuild && (
+                      <small className="cell-sub">
+                        {time(r.latestBuild.createdAt)}
+                      </small>
+                    )}
+                  </td>
+                  <td>{time(r.createdAt)}</td>
+                  <td>
+                    <div className="row-actions">
+                      <button onClick={() => openRelease(r.id)}>详情</button>
+                      <button
+                        disabled={projectBusy(r.projectId) || !!p?.archived}
+                        onClick={() => startRelease(r.id)}
+                      >
+                        {r.autoPublish ? "构建发布" : "构建"}
+                      </button>
+                      <button
+                        className="icon-button"
+                        aria-label={`编辑 ${r.title}`}
+                        title="编辑发布单"
+                        disabled={busy || active(r.latestBuild)}
+                        onClick={() =>
+                          setModal({ type: "release", release: r })
+                        }
+                      >
+                        <Pencil size={15} />
+                      </button>
+                      <span
+                        title={
+                          protectedOrder
+                            ? "包含当前线上版本或上一版，暂不能删除"
+                            : active(r.latestBuild)
+                              ? "请等待构建结束"
+                              : "删除发布单"
+                        }
+                      >
+                        <button
+                          className="icon-button danger-text"
+                          aria-label={`删除 ${r.title}`}
+                          disabled={
+                            busy || active(r.latestBuild) || protectedOrder
+                          }
+                          onClick={() =>
+                            setModal({ type: "delete-release", release: r })
+                          }
+                        >
+                          <Trash2 size={15} />
+                        </button>
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        {!rows.length && (
+          <div className="empty">
+            <Package size={30} />
+            <h3>暂无匹配的发布单</h3>
+            <p>新建发布单，选择项目与分支后开始构建。</p>
+            <button
+              disabled={!available.length}
+              onClick={() =>
+                newRelease(
+                  releaseProject === "all" ? undefined : releaseProject,
+                )
+              }
+            >
+              <Plus size={15} />
+              新建发布单
             </button>
           </div>
         )}
@@ -703,8 +1020,8 @@ function App() {
         <p className="nav-label">工作台</p>
         <nav>
           {[
-            ["games", LayoutGrid, "游戏项目"],
-            ["builds", Package, "构建记录"],
+            ["games", LayoutGrid, "项目管理"],
+            ["builds", Package, "发布单"],
             ["activity", History, "发布动态"],
           ].map(([key, Icon, label]) => (
             <button
@@ -790,10 +1107,15 @@ function App() {
           )}
           <div className="page-heading">
             <div>
-              {project && (
-                <button className="back-link" onClick={() => setSelected(null)}>
+              {(project || release) && (
+                <button
+                  className="back-link"
+                  onClick={() =>
+                    release ? setReleaseId(null) : setSelected(null)
+                  }
+                >
                   <ArrowLeft size={14} />
-                  全部游戏
+                  {release ? "全部发布单" : "全部项目"}
                 </button>
               )}
               <div className="eyebrow">
@@ -801,7 +1123,7 @@ function App() {
                   ? "PROJECT OVERVIEW"
                   : {
                       games: "YOUR GAME WORKSPACE",
-                      builds: "BUILD HISTORY",
+                      builds: "RELEASE ORDERS",
                       activity: "RELEASE ACTIVITY",
                       settings: "WORKSPACE SETTINGS",
                     }[page]}
@@ -813,57 +1135,72 @@ function App() {
                 )}
               </h1>
               <p>
-                {project
-                  ? project.repo
-                  : {
-                      games: "集中管理单机游戏的构建、发布与版本。",
-                      builds: "追踪每次构建，查看日志与产物。",
-                      activity: "每一次上线与回滚，都有迹可循。",
-                      settings: "查看服务配置与部署信息。",
-                    }[page]}
+                {release
+                  ? `${releaseProjectData?.name} · ${release.branch}`
+                  : project
+                    ? project.repo
+                    : {
+                        games: "管理游戏仓库、构建配置和访问地址。",
+                        builds: "选择项目与分支，多次构建发布，保留每次日志。",
+                        activity: "每一次上线与回滚，都有迹可循。",
+                        settings: "查看服务配置与部署信息。",
+                      }[page]}
               </p>
             </div>
             <div className="heading-actions">
-              {project ? (
+              {release ? (
+                <>
+                  <button
+                    disabled={busy || active(release.latestBuild)}
+                    onClick={() => setModal({ type: "release", release })}
+                  >
+                    <Pencil size={15} />
+                    编辑发布单
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={
+                      projectBusy(release.projectId) ||
+                      !!releaseProjectData?.archived
+                    }
+                    onClick={() => startRelease(release.id)}
+                  >
+                    <Package size={16} />
+                    {release.autoPublish ? "构建并发布" : "开始构建"}
+                  </button>
+                </>
+              ) : project ? (
                 <>
                   <button
                     onClick={() => setModal({ type: "project", project })}
                   >
                     <Settings2 size={16} />
-                    游戏设置
+                    项目设置
                   </button>
                   <button
                     className="primary"
-                    onClick={() => newBuild(project.id)}
-                    disabled={!!project.archived || active(project.latestBuild)}
+                    onClick={() => viewProjectReleases(project.id)}
                   >
-                    <Plus size={17} />
-                    新增打包
+                    <Package size={17} />
+                    查看发布单
                   </button>
                 </>
               ) : page === "games" ? (
-                <>
-                  <button onClick={() => setModal({ type: "project" })}>
-                    <FolderGit2 size={16} />
-                    接入游戏
-                  </button>
-                  <button
-                    className="primary"
-                    onClick={() => newBuild()}
-                    disabled={!available.length}
-                  >
-                    <Plus size={17} />
-                    新增打包
-                  </button>
-                </>
+                <button
+                  className="primary"
+                  onClick={() => setModal({ type: "project" })}
+                >
+                  <FolderGit2 size={16} />
+                  新建项目
+                </button>
               ) : page === "builds" ? (
                 <button
                   className="primary"
-                  onClick={() => newBuild()}
+                  onClick={() => newRelease()}
                   disabled={!available.length}
                 >
                   <Plus size={17} />
-                  新增打包
+                  新建发布单
                 </button>
               ) : null}
             </div>
@@ -873,6 +1210,168 @@ function App() {
               <Loader2 className="spin" />
               <p>正在加载项目…</p>
             </div>
+          ) : release ? (
+            <>
+              <div className="release-summary">
+                <div>
+                  <span className="section-label">所属项目</span>
+                  <button
+                    className="text-button dark"
+                    onClick={() => {
+                      navigate("games");
+                      setSelected(release.projectId);
+                    }}
+                  >
+                    <FolderGit2 size={16} />
+                    {releaseProjectData?.name}
+                    <ArrowUpRight size={14} />
+                  </button>
+                </div>
+                <div>
+                  <span className="section-label">下次构建分支</span>
+                  <span className="branch-name">
+                    <GitBranch size={15} />
+                    {release.branch}
+                  </span>
+                </div>
+                <div>
+                  <span className="section-label">发布方式</span>
+                  <p>
+                    {release.autoPublish
+                      ? "构建成功后自动发布"
+                      : "构建后手动发布"}
+                  </p>
+                </div>
+                <div>
+                  <span className="section-label">创建时间</span>
+                  <p>{time(release.createdAt)}</p>
+                </div>
+              </div>
+              {release.notes && (
+                <p className="release-notes">{release.notes}</p>
+              )}
+              {!!releaseProjectData?.archived && (
+                <div className="error-banner">
+                  所属项目已归档，恢复项目后可继续构建发布。
+                </div>
+              )}
+              <div className="release-panel">
+                <div>
+                  <span className="section-label">项目访问地址</span>
+                  {releaseProjectData?.currentReleaseId &&
+                  !releaseProjectData.archived ? (
+                    <div className="url-line">
+                      <a
+                        href={releaseProjectData.url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {releaseProjectData.url}
+                        <ArrowUpRight size={14} />
+                      </a>
+                      <button
+                        className="icon-button"
+                        aria-label="复制访问地址"
+                        onClick={() => copy(releaseProjectData.url)}
+                      >
+                        <Copy size={14} />
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="muted">首次发布成功后可访问</p>
+                  )}
+                </div>
+                <div>
+                  <span className="section-label">项目当前线上版本</span>
+                  <p>
+                    <code>{short(releaseProjectData?.currentReleaseId)}</code> ·{" "}
+                    {releaseProjectData?.currentRelease?.branch || "—"}
+                  </p>
+                </div>
+                <button
+                  disabled={
+                    !releaseProjectData?.previousReleaseId ||
+                    !!releaseProjectData?.archived ||
+                    busy
+                  }
+                  onClick={() => confirm("rollback", releaseProjectData)}
+                >
+                  <RotateCcw size={15} />
+                  回滚上一版
+                </button>
+              </div>
+              <div className="section-heading">
+                <h2>打包日志</h2>
+                {releaseBuilds.length > 0 && (
+                  <label className="log-selector">
+                    选择构建记录
+                    <select
+                      aria-label="选择构建记录"
+                      value={logBuild?.id || ""}
+                      onChange={(e) => setLogBuildId(e.target.value)}
+                    >
+                      {releaseBuilds.map((b, index) => (
+                        <option key={b.id} value={b.id}>
+                          第 {releaseBuilds.length - index} 次 · {b.branch} ·{" "}
+                          {short(b.id)} · {labels[b.status]}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </div>
+              {logBuild ? (
+                <BuildLog
+                  inline
+                  build={logBuild}
+                  project={releaseProjectData}
+                  onCancel={(id) =>
+                    act(() => send(`/builds/${id}/cancel`), "已请求取消", false)
+                  }
+                />
+              ) : (
+                <div className="empty log-empty">
+                  <Terminal size={30} />
+                  <h3>尚未开始构建</h3>
+                  <p>
+                    点击“{release.autoPublish ? "构建并发布" : "开始构建"}
+                    ”后，这里会显示实时打包日志。
+                  </p>
+                </div>
+              )}
+              <div className="section-heading build-history-heading">
+                <h2>
+                  构建记录 <span>{releaseBuilds.length} 次</span>
+                </h2>
+                <span className="muted">
+                  每次构建独立保存，点击日志可切换查看
+                </span>
+              </div>
+              {releaseBuilds.length ? (
+                buildTable(releaseBuilds)
+              ) : (
+                <p className="muted">暂无构建记录</p>
+              )}
+              <div className="archive-area">
+                <p>
+                  {protectedRelease(release)
+                    ? "包含当前线上版本或上一版，暂不能删除此发布单。"
+                    : "删除发布单会从管理列表中移除相关构建记录。"}
+                </p>
+                <button
+                  className="danger-text"
+                  disabled={
+                    busy ||
+                    active(release.latestBuild) ||
+                    protectedRelease(release)
+                  }
+                  onClick={() => setModal({ type: "delete-release", release })}
+                >
+                  <Trash2 size={15} />
+                  删除发布单
+                </button>
+              </div>
+            </>
           ) : project ? (
             <>
               <div className="project-summary">
@@ -953,12 +1452,31 @@ function App() {
                 </button>
               </div>
               <div className="section-heading">
-                <h2>
-                  版本与构建<span>{projectBuilds.length}</span>
-                </h2>
-                <span className="muted">发布记录保留，支持重复切换</span>
+                <h2>项目配置</h2>
+                <button onClick={() => viewProjectReleases(project.id)}>
+                  查看此项目发布单 <ArrowRight size={14} />
+                </button>
               </div>
-              {buildTable(projectBuilds)}
+              <dl className="project-config">
+                <div>
+                  <dt>依赖安装</dt>
+                  <dd>
+                    <code>{project.installCommand || "无需安装"}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>构建命令</dt>
+                  <dd>
+                    <code>{project.buildCommand}</code>
+                  </dd>
+                </div>
+                <div>
+                  <dt>产物目录</dt>
+                  <dd>
+                    <code>{project.outputDir}</code>
+                  </dd>
+                </div>
+              </dl>
               <div className="archive-area">
                 <p>
                   {project.archived
@@ -1068,7 +1586,7 @@ function App() {
                       <th>游戏项目</th>
                       <th>Git 仓库 / 分支</th>
                       <th>线上版本</th>
-                      <th>最新构建</th>
+                      <th>发布单</th>
                       <th className="right">操作</th>
                     </tr>
                   </thead>
@@ -1124,35 +1642,26 @@ function App() {
                           )}
                         </td>
                         <td>
-                          {p.latestBuild ? (
-                            <>
-                              <button
-                                className="status-link"
-                                onClick={() =>
-                                  setModal({
-                                    type: "log",
-                                    id: p.latestBuild.id,
-                                  })
-                                }
-                              >
-                                <Status build={p.latestBuild} />
-                              </button>
-                              <small className="cell-sub">
-                                {time(p.latestBuild.createdAt)}
-                              </small>
-                            </>
-                          ) : (
-                            <span className="muted">暂无构建</span>
-                          )}
+                          <button
+                            className="text-button"
+                            onClick={() => viewProjectReleases(p.id)}
+                          >
+                            {
+                              releases.filter((r) => r.projectId === p.id)
+                                .length
+                            }{" "}
+                            个发布单 <ChevronRight size={12} />
+                          </button>
                         </td>
                         <td>
                           <div className="row-actions">
                             <button
-                              onClick={() => newBuild(p.id)}
-                              disabled={!!p.archived || active(p.latestBuild)}
+                              onClick={() =>
+                                setModal({ type: "project", project: p })
+                              }
                             >
-                              <Package size={14} />
-                              打包
+                              <Settings2 size={14} />
+                              配置
                             </button>
                             <button
                               className="icon-button"
@@ -1231,27 +1740,65 @@ function App() {
             </>
           ) : page === "builds" ? (
             <>
-              <div className="list-toolbar">
-                <h2>
-                  全部构建 <span className="muted">{builds.length}</span>
-                </h2>
+              <div className="list-toolbar release-filters">
+                <div className="filter-fields">
+                  <label>
+                    项目
+                    <select
+                      aria-label="筛选项目"
+                      value={releaseProject}
+                      onChange={(e) => setReleaseProject(e.target.value)}
+                    >
+                      <option value="all">全部项目</option>
+                      {projects.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    最近状态
+                    <select
+                      aria-label="筛选发布单状态"
+                      value={releaseStatus}
+                      onChange={(e) => setReleaseStatus(e.target.value)}
+                    >
+                      <option value="all">全部状态</option>
+                      {Object.entries(labels).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
                 <label className="search">
                   <Search size={16} />
                   <input
-                    aria-label="搜索构建"
-                    placeholder="搜索游戏或提交…"
+                    aria-label="搜索发布单"
+                    placeholder="搜索发布单、项目或分支…"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
                 </label>
               </div>
-              {buildTable(
-                builds.filter((b) =>
-                  `${projects.find((p) => p.id === b.projectId)?.name} ${b.projectId} ${b.commitHash} ${b.id}`
-                    .toLowerCase()
-                    .includes(query.toLowerCase()),
+              {releaseTable(
+                releases.filter(
+                  (r) =>
+                    (releaseProject === "all" ||
+                      r.projectId === releaseProject) &&
+                    (releaseStatus === "all" ||
+                      (r.latestBuild?.status || "draft") === releaseStatus) &&
+                    `${r.title} ${r.id} ${r.branch} ${projects.find((p) => p.id === r.projectId)?.name}`
+                      .toLowerCase()
+                      .includes(query.toLowerCase()),
                 ),
               )}
+              <div className="list-footer">
+                <span>共 {releases.length} 个发布单</span>
+                <span>构建状态自动更新</span>
+              </div>
             </>
           ) : page === "activity" ? (
             <div className="activity-page">
@@ -1352,20 +1899,54 @@ function App() {
           }
         />
       )}
-      {modal?.type === "build" && (
-        <BuildForm
-          projects={available}
+      {modal?.type === "release" && (
+        <ReleaseForm
+          projects={projects}
+          release={modal.release}
           initialId={modal.id}
           onClose={() => setModal(null)}
           busy={busy}
-          onSave={async (id, autoPublish) => {
-            const b = await action(
-              () => send(`/projects/${id}/builds`, { autoPublish }),
-              "构建已加入队列",
+          onSave={async (form) => {
+            const result = await action(
+              () =>
+                send(
+                  modal.release ? `/releases/${modal.release.id}` : "/releases",
+                  form,
+                  modal.release ? "PATCH" : "POST",
+                ),
+              modal.release ? "发布单已更新" : "发布单已创建",
             );
-            setModal({ type: "log", id: b.id });
+            openRelease(result.id);
           }}
         />
+      )}
+      {modal?.type === "delete-release" && (
+        <Modal title="删除发布单" onClose={() => setModal(null)}>
+          <div className="form-body">
+            <p>{modal.release.title}</p>
+            <p className="muted">
+              删除后，此发布单及其构建记录将从管理列表中移除，无法恢复。
+            </p>
+          </div>
+          <div className="modal-actions">
+            <button onClick={() => setModal(null)}>取消</button>
+            <button
+              className="danger-text"
+              disabled={busy}
+              onClick={async () => {
+                const result = await act(
+                  () => send(`/releases/${modal.release.id}`, {}, "DELETE"),
+                  "发布单已删除",
+                );
+                if (result && releaseId === modal.release.id)
+                  setReleaseId(null);
+              }}
+            >
+              <Trash2 size={15} />
+              确认删除
+            </button>
+          </div>
+        </Modal>
       )}
       {modal?.type === "log" && builds.find((b) => b.id === modal.id) && (
         <BuildLog
@@ -1447,6 +2028,9 @@ function Activity({ events, projects }) {
     rollback: "回滚了线上版本",
     archived: "归档了游戏",
     restored: "恢复了游戏",
+    release_created: "创建了发布单",
+    release_updated: "编辑了发布单",
+    release_deleted: "删除了发布单",
   };
   return (
     <div className="activity-list">
@@ -1473,7 +2057,9 @@ function Activity({ events, projects }) {
                 {verbs[event.action] || event.action}
               </p>
               <small>
-                {event.releaseId ? `版本 ${short(event.releaseId)} · ` : ""}
+                {event.releaseId
+                  ? `${event.action.startsWith("release_") ? "发布单" : "版本"} ${short(event.releaseId)} · `
+                  : ""}
                 {time(event.createdAt)}
               </small>
             </div>

@@ -25,6 +25,12 @@ export function openStore(dataDir) {
       port INTEGER NOT NULL UNIQUE, publicUrl TEXT NOT NULL DEFAULT '', createdAt TEXT NOT NULL,
       currentReleaseId TEXT, previousReleaseId TEXT, archived INTEGER NOT NULL DEFAULT 0
     );
+    CREATE TABLE IF NOT EXISTS release_orders (
+      id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id),
+      title TEXT NOT NULL, branch TEXT NOT NULL, autoPublish INTEGER NOT NULL,
+      notes TEXT NOT NULL DEFAULT '', createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL,
+      deletedAt TEXT
+    );
     CREATE TABLE IF NOT EXISTS builds (
       id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), status TEXT NOT NULL,
       config TEXT NOT NULL, autoPublish INTEGER NOT NULL, createdAt TEXT NOT NULL,
@@ -38,6 +44,44 @@ export function openStore(dataDir) {
     );
     CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expiresAt INTEGER NOT NULL);
   `);
+  // Upgrade existing installations without changing build IDs or live versions.
+  transaction(db, () => {
+    if (
+      !db
+        .prepare("PRAGMA table_info(builds)")
+        .all()
+        .some((c) => c.name === "releaseOrderId")
+    )
+      db.exec(
+        "ALTER TABLE builds ADD COLUMN releaseOrderId TEXT REFERENCES release_orders(id)",
+      );
+    db.exec(
+      "CREATE INDEX IF NOT EXISTS builds_release_order ON builds(releaseOrderId, createdAt DESC)",
+    );
+    for (const b of db
+      .prepare("SELECT * FROM builds WHERE releaseOrderId IS NULL")
+      .all()) {
+      const config = JSON.parse(b.config);
+      const p = db
+        .prepare("SELECT * FROM projects WHERE id=?")
+        .get(b.projectId);
+      db.prepare(
+        "INSERT INTO release_orders(id,projectId,title,branch,autoPublish,notes,createdAt,updatedAt) VALUES(?,?,?,?,?,'',?,?)",
+      ).run(
+        b.id,
+        b.projectId,
+        `${p.name} · ${b.id.slice(0, 7)}`,
+        config.branch || p.branch,
+        b.autoPublish,
+        b.createdAt,
+        b.finishedAt || b.createdAt,
+      );
+      db.prepare("UPDATE builds SET releaseOrderId=? WHERE id=?").run(
+        b.id,
+        b.id,
+      );
+    }
+  });
   return db;
 }
 

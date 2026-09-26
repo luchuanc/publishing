@@ -46,6 +46,13 @@ export function createPublicServer(service) {
           JSON.parse(b.config).kind !== "android"
         )
           return res.writeHead(404).end();
+        if (b.artifactsDeletedAt || b.artifactCleanupStartedAt)
+          return res
+            .writeHead(410, {
+              "Content-Type": "text/plain; charset=utf-8",
+              "Cache-Control": "no-store",
+            })
+            .end("此版本 APK 已按保留规则清理，请下载最新版本");
         res.setHeader(
           "Content-Disposition",
           `attachment; filename="${p.id}-${b.id.slice(0, 8)}.apk"`,
@@ -90,7 +97,7 @@ export function createPublicServer(service) {
         if (/[-.][a-zA-Z0-9_-]{8,}\.(js|css|woff2?)$/.test(pathname)) {
           for (const b of service.db
             .prepare(
-              "SELECT id FROM builds WHERE projectId=? AND status='succeeded' ORDER BY createdAt DESC",
+              "SELECT id FROM builds WHERE projectId=? AND status='succeeded' AND artifactsDeletedAt IS NULL AND artifactCleanupStartedAt IS NULL ORDER BY createdAt DESC",
             )
             .all(p.id)) {
             if (

@@ -140,6 +140,12 @@ export function createApp(service, config) {
         return;
       if (url.pathname === "/api/state" && req.method === "GET")
         return json(res, 200, service.snapshot());
+      if (url.pathname === "/api/storage" && req.method === "GET")
+        return json(res, 200, await service.storage.inspect());
+      if (url.pathname === "/api/storage/cleanup" && req.method === "POST") {
+        await body(req);
+        return json(res, 200, await service.storage.cleanup("manual"));
+      }
       if (url.pathname === "/api/projects" && req.method === "POST")
         return json(res, 201, await service.addProject(await body(req)));
       if (url.pathname === "/api/releases" && req.method === "POST")
@@ -214,12 +220,18 @@ export function createApp(service, config) {
       );
       if (match) {
         const [, id, action] = match;
-        service.build(id);
+        const build = service.build(id);
         if (action === "cancel" && req.method === "POST") {
           service.cancel(id);
           return json(res, 200, { ok: true });
         }
         if (action === "log" && req.method === "GET") {
+          if (build.logDeletedAt)
+            return json(res, 200, {
+              text: "",
+              expired: true,
+              deletedAt: build.logDeletedAt,
+            });
           let text = "";
           try {
             text = await readFile(

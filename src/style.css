@@ -1819,3 +1819,112 @@ textarea:focus {
 .settings form input {
   width: 100%;
 }
+.settings .storage-settings {
+  grid-column: 1 / -1;
+}
+.storage-heading,
+.storage-actions,
+.storage-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.storage-heading h2 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.storage-heading button,
+.storage-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.storage-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.5fr;
+  gap: 16px;
+  margin: 24px 0 12px;
+}
+.storage-metrics div {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  background: #f5f6fa;
+  border-radius: 8px;
+}
+.storage-metrics span {
+  color: #626d83;
+  font-size: 12px;
+}
+.storage-metrics strong {
+  font-size: 20px;
+}
+.storage-settings meter {
+  display: block;
+  width: 100%;
+  height: 14px;
+}
+.storage-settings table {
+  width: 100%;
+  margin: 16px 0;
+}
+.storage-settings th,
+.storage-settings td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #e8ebf2;
+  white-space: nowrap;
+}
+.storage-actions {
+  margin: 24px 0 16px;
+}
+.storage-actions p {
+  margin: 6px 0 0;
+}
+.cleanup-confirm {
+  padding: 20px;
+  background: #fff8ef;
+  border: 1px solid #ebd9bd;
+  border-radius: 8px;
+}
+.cleanup-confirm h3 {
+  margin-top: 0;
+}
+.cleanup-confirm ul,
+.storage-settings details ul {
+  max-height: 240px;
+  overflow: auto;
+  padding-left: 22px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+.storage-buttons {
+  justify-content: flex-end;
+}
+.storage-last-run {
+  margin: 16px 0;
+  padding-top: 8px;
+  border-top: 1px solid #e8ebf2;
+}
+.storage-settings details {
+  margin: 16px 0;
+}
+.storage-settings summary {
+  cursor: pointer;
+}
+@media (max-width: 650px) {
+  .storage-metrics {
+    grid-template-columns: 1fr;
+  }
+  .storage-heading,
+  .storage-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .storage-metrics strong {
+    font-size: 18px;
+  }
+}

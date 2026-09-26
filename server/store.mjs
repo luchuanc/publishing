@@ -47,6 +47,16 @@ export function openStore(dataDir) {
   `);
   // Upgrade existing installations without changing build IDs or live versions.
   transaction(db, () => {
+    const buildColumns = db.prepare("PRAGMA table_info(builds)").all();
+    for (const name of [
+      "cleanupEligibleAt",
+      "artifactCleanupStartedAt",
+      "artifactsDeletedAt",
+      "logDeletedAt",
+    ]) {
+      if (!buildColumns.some((c) => c.name === name))
+        db.exec(`ALTER TABLE builds ADD COLUMN ${name} TEXT`);
+    }
     const columns = db.prepare("PRAGMA table_info(projects)").all();
     if (!columns.some((c) => c.name === "kind"))
       db.exec(

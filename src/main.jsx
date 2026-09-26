@@ -38,6 +38,7 @@ import {
   Trash2,
 } from "lucide-react";
 import "./style.css";
+import StorageSettings from "./StorageSettings.jsx";
 
 async function api(route, options = {}) {
   const response = await fetch(`/api${route}`, {
@@ -783,18 +784,21 @@ function ReleaseForm({ projects, release, initialId, busy, onSave, onClose }) {
 }
 function BuildLog({ build, project, onClose, onCancel, inline = false }) {
   const [text, setText] = useState(""),
+    [expired, setExpired] = useState(false),
     [error, setError] = useState(""),
     [follow, setFollow] = useState(true);
   const logRef = useRef();
   useEffect(() => {
     let stopped = false;
     setText("");
+    setExpired(false);
     setError("");
     async function load() {
       try {
         const result = await api(`/builds/${build.id}/log`);
         if (!stopped) {
           setText(result.text);
+          setExpired(!!result.expired);
           setError("");
         }
       } catch (e) {
@@ -807,7 +811,7 @@ function BuildLog({ build, project, onClose, onCancel, inline = false }) {
       stopped = true;
       clearInterval(timer);
     };
-  }, [build.id, build.status]);
+  }, [build.id, build.status, build.logDeletedAt]);
   useEffect(() => {
     if (follow && logRef.current)
       logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -837,6 +841,7 @@ function BuildLog({ build, project, onClose, onCancel, inline = false }) {
         <button
           className="icon-button"
           onClick={download}
+          disabled={expired || !text}
           title="下载日志"
           aria-label="下载日志"
         >
@@ -844,7 +849,9 @@ function BuildLog({ build, project, onClose, onCancel, inline = false }) {
         </button>
       </div>
       <pre ref={logRef} className="log-output">
-        {text || "等待构建开始…"}
+        {expired
+          ? "该日志已按 30 天保留规则清理，构建记录仍然保留。"
+          : text || "等待构建开始…"}
       </pre>
       {(error || build.error) && (
         <p className="error-text log-error">{error || build.error}</p>
@@ -1084,7 +1091,11 @@ function App() {
                     <small className="cell-sub">{duration(b)}</small>
                   </td>
                   <td>
-                    {size(b.sizeBytes)}
+                    {b.artifactsDeletedAt
+                      ? "产物已清理"
+                      : b.artifactCleanupStartedAt
+                        ? "产物清理中"
+                        : size(b.sizeBytes)}
                     {b.appConfig && (
                       <small className="cell-sub">
                         v{b.appConfig.versionName} · {b.appConfig.versionCode}
@@ -1100,13 +1111,16 @@ function App() {
                         </a>
                       )}
                       {b.status === "succeeded" &&
+                        !b.artifactsDeletedAt &&
+                        !b.artifactCleanupStartedAt &&
                         p?.currentReleaseId !== b.id &&
                         !p?.archived && (
                           <button onClick={() => confirm("publish", p, b)}>
                             发布
                           </button>
                         )}
-                      {["failed", "cancelled"].includes(b.status) &&
+                      {(["failed", "cancelled"].includes(b.status) ||
+                        b.artifactsDeletedAt) &&
                         !p?.archived && (
                           <button
                             disabled={projectBusy(p.id)}
@@ -1804,7 +1818,12 @@ function App() {
                   </span>
                   <strong>
                     {builds
-                      .filter((b) => b.status === "succeeded")
+                      .filter(
+                        (b) =>
+                          b.status === "succeeded" &&
+                          !b.artifactsDeletedAt &&
+                          !b.artifactCleanupStartedAt,
+                      )
                       .length.toString()
                       .padStart(2, "0")}
                   </strong>
@@ -2088,6 +2107,7 @@ function App() {
             </div>
           ) : (
             <div className="settings">
+              <StorageSettings api={api} onChanged={refresh} />
               <PublicSettings
                 system={state.system}
                 busy={busy}

@@ -1,4 +1,5 @@
 import { prepareLegacyReleases } from "./legacy.mjs";
+import { StorageManager } from "./storage.mjs";
 import { createPublicServer } from "./public.mjs";
 import {
   androidConfig,
@@ -144,6 +145,13 @@ export class PublishingService {
     this.active = null;
     this.work = null;
     this.stopping = false;
+    this.artifactLock = Promise.resolve();
+    this.storage = new StorageManager(this);
+  }
+  withArtifactLock(operation) {
+    const result = this.artifactLock.then(operation);
+    this.artifactLock = result.catch(() => {});
+    return result;
   }
   project(id) {
     const result = this.db.prepare("SELECT * FROM projects WHERE id=?").get(id);
@@ -504,8 +512,10 @@ export class PublishingService {
         },
       });
     }
+    await this.storage.cleanup("startup");
     await prepareLegacyReleases(this);
     await this.listenPublic();
+    this.storage.start();
     this.kick();
   }
   snapshot() {
@@ -523,7 +533,10 @@ export class PublishingService {
           kind: p.kind || "web",
           appConfig: p.appSnapshot || null,
           downloadUrl:
-            p.kind === "android" && b.status === "succeeded"
+            p.kind === "android" &&
+            b.status === "succeeded" &&
+            !b.artifactsDeletedAt &&
+            !b.artifactCleanupStartedAt
               ? this.downloadUrl(b)
               : null,
         };
@@ -853,6 +866,7 @@ export class PublishingService {
         console.error("清理工作目录失败：", error.message),
       );
       this.active = null;
+      this.storage.reconcile();
     }
   }
   cancel(id) {
@@ -867,11 +881,18 @@ export class PublishingService {
     else this.active?.id === id && this.active.controller.abort();
   }
   async publish(projectId, releaseId, action = "published", expectedCurrent) {
+    return this.withArtifactLock(() =>
+      this.publishUnlocked(projectId, releaseId, action, expectedCurrent),
+    );
+  }
+  async publishUnlocked(projectId, releaseId, action, expectedCurrent) {
     const p = this.project(projectId),
       b = this.build(releaseId);
     if (p.archived) fail("请先恢复游戏", 409);
     if (b.projectId !== projectId || b.status !== "succeeded")
       fail("该版本没有可发布的成功产物", 409);
+    if (b.artifactsDeletedAt || b.artifactCleanupStartedAt)
+      fail("该版本产物已清理，请重新构建后发布", 409);
     if (
       !(
         await stat(
@@ -903,6 +924,7 @@ export class PublishingService {
         .run(now(), releaseId);
       this.event(projectId, action, releaseId, fresh.currentReleaseId);
     });
+    this.storage.reconcile();
     return this.project(projectId);
   }
   async rollback(id, expectedCurrent) {
@@ -930,6 +952,7 @@ export class PublishingService {
   async close() {
     this.stopping = true;
     this.active?.controller.abort();
+    await this.storage.close();
     await this.work;
     if (this.publicServer) await closeHttpServer(this.publicServer);
     this.publicServer = null;

@@ -15,7 +15,9 @@ export async function prepareLegacyReleases(service) {
   const root = path.join(service.config.dataDir, "subpath-releases");
   await mkdir(root, { recursive: true });
   for (const b of service.db
-    .prepare("SELECT * FROM builds WHERE status='succeeded'")
+    .prepare(
+      "SELECT * FROM builds WHERE status='succeeded' AND artifactsDeletedAt IS NULL AND artifactCleanupStartedAt IS NULL",
+    )
     .all()) {
     const config = JSON.parse(b.config);
     if (

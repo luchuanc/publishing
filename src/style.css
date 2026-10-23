@@ -1901,7 +1901,7 @@ textarea:focus {
 }
 .catalog-form fieldset {
   border: 0;
-  padding: 0;
+  padding: 23px 26px;
   margin: 0;
   min-width: 0;
   display: grid;
@@ -1921,6 +1921,9 @@ textarea:focus {
   margin-bottom: 0;
 }
 @media (max-width: 650px) {
+  .catalog-form fieldset {
+    padding: 21px;
+  }
   .catalog-table {
     min-width: 640px;
   }

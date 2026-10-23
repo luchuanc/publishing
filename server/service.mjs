@@ -501,6 +501,12 @@ export class PublishingService {
         },
       });
     }
+    if (
+      this.db
+        .prepare("SELECT id FROM projects WHERE id='h5-app' AND kind='android'")
+        .get()
+    )
+      this.catalogManager.importLegacyApps();
     await this.storage.cleanup("startup");
     await prepareLegacyReleases(this);
     await this.listenPublic();

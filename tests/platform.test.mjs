@@ -839,6 +839,7 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
     "https://external.example.com/v1/",
   );
   assert.equal(attempt.appConfig.games[1].iconFile, icon.icon);
+  assert.equal(attempt.appConfig.games[1].orientation, "portrait");
   assert.equal(service.catalog().games[0].icon, "");
   const apk = await fetch(attempt.downloadUrl);
   assert.equal(
@@ -976,6 +977,7 @@ test("catalog project overrides save independently, follow publications by defau
   const before = service.catalogManager.entries()[0];
   assert.equal(before.available, false);
   assert.equal(before.revision, 0);
+  assert.equal(before.orientation, "landscape");
   assert.deepEqual(service.catalog().games, []);
   const first = await build();
   assert.equal(service.catalog().games[0].version, first.id);
@@ -1082,6 +1084,8 @@ test("catalog CRUD API persists external H5 entries, validates input and protect
     { id: "demo" },
     { name: "" },
     { enabled: "true" },
+    { orientation: "sideways" },
+    { orientation: false },
     { url: "javascript:alert(1)" },
     { url: "//evil.example.com" },
     { url: "https://user:pass@example.com/" },
@@ -1107,6 +1111,7 @@ test("catalog CRUD API persists external H5 entries, validates input and protect
       url: payload.url,
       version: "1.2.0",
       icon: "",
+      orientation: "portrait",
     },
   ]);
   assert.equal(
@@ -1139,6 +1144,107 @@ test("catalog CRUD API persists external H5 entries, validates input and protect
     changed.url,
     "external URLs do not follow platform domain changes",
   );
+});
+
+test("catalog orientation persists, updates without URL changes, and is snapshotted for APK builds", async (t) => {
+  const { service, config } = await fixture(t);
+  let entry = await service.catalogManager.save(
+    "audio",
+    {
+      name: "听录音",
+      url: "https://audio.example.com/",
+      version: "1",
+      icon: "",
+      enabled: true,
+    },
+    true,
+  );
+  assert.equal(entry.orientation, "portrait");
+  for (const orientation of ["landscape", "auto", "portrait"]) {
+    entry = await service.catalogManager.save(entry.id, {
+      ...entry,
+      orientation,
+    });
+    assert.equal(service.catalog().games[0].orientation, orientation);
+    assert.equal(service.catalog().games[0].url, "https://audio.example.com/");
+  }
+  const apk = service.appSnapshot({ appConfig: { defaultGameId: "demo" } });
+  entry = await service.catalogManager.save(entry.id, {
+    ...entry,
+    orientation: "auto",
+  });
+  assert.equal(apk.games[0].orientation, "portrait");
+  const db = openStore(config.dataDir);
+  try {
+    assert.equal(
+      new PublishingService(db, config).catalog().games[0].orientation,
+      "auto",
+    );
+  } finally {
+    db.close();
+  }
+});
+
+test("legacy business apps import once, preserve custom entries and resolve identifier collisions", async (t) => {
+  const { service, config } = await fixture(t);
+  await service.catalogManager.save(
+    "points",
+    {
+      name: "用户已有应用",
+      url: "https://other.example.com/",
+      version: "1",
+      icon: "",
+      enabled: true,
+    },
+    true,
+  );
+  await service.catalogManager.save(
+    "ledger-custom",
+    {
+      name: "我的账本",
+      url: "https://money.lucc.site:8888/",
+      version: "2",
+      icon: "",
+      enabled: false,
+      orientation: "auto",
+    },
+    true,
+  );
+  service.catalogManager.importLegacyApps();
+  const entries = service.catalogManager.entries();
+  const ledger = entries.find((e) => e.legacyId === "remote:lujia-ledger");
+  const points = entries.find((e) => e.legacyId === "remote:points");
+  assert.equal(ledger.id, "ledger-custom");
+  assert.equal(ledger.name, "我的账本");
+  assert.equal(ledger.enabled, false);
+  assert.equal(ledger.orientation, "auto");
+  assert.equal(points.id, "points-1");
+  assert.equal(points.orientation, "portrait");
+  assert.equal(
+    entries.find((e) => e.id === "points").game.url,
+    "https://other.example.com/",
+  );
+  await service.catalogManager.save(points.id, {
+    ...points,
+    url: "https://new.example.com/",
+    enabled: false,
+    legacyId: "remote:injected",
+  });
+  service.catalogManager.importLegacyApps();
+  const db = openStore(config.dataDir);
+  try {
+    const other = new PublishingService(db, config);
+    other.catalogManager.importLegacyApps();
+    const saved = other.catalogManager
+      .entries()
+      .find((e) => e.id === points.id);
+    assert.equal(saved.game.url, "https://new.example.com/");
+    assert.equal(saved.legacyId, "remote:points");
+    assert.equal(saved.enabled, false);
+    assert.equal(other.catalogManager.entries().length, entries.length);
+  } finally {
+    db.close();
+  }
 });
 
 test("catalog icon overrides preserve project defaults, and platform links follow later domain changes", async (t) => {

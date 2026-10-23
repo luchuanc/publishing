@@ -411,7 +411,7 @@ function PublicSettings({ system, onSave, busy }) {
           </dd>
         </div>
         <div>
-          <dt>公开游戏列表</dt>
+          <dt>公开应用列表</dt>
           <dd>
             <a href={system.catalogUrl} target="_blank" rel="noreferrer">
               {system.catalogUrl}

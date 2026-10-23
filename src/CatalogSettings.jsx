@@ -8,6 +8,12 @@ const empty = {
   version: "",
   icon: "",
   enabled: true,
+  orientation: "portrait",
+};
+const orientationLabels = {
+  portrait: "竖屏",
+  landscape: "横屏",
+  auto: "跟随系统",
 };
 
 export default function CatalogSettings({
@@ -51,9 +57,16 @@ export default function CatalogSettings({
     setFormError("");
     try {
       const payload = Object.fromEntries(
-        ["id", "name", "url", "version", "icon", "enabled", "revision"].map(
-          (k) => [k, form[k]],
-        ),
+        [
+          "id",
+          "name",
+          "url",
+          "version",
+          "icon",
+          "enabled",
+          "revision",
+          "orientation",
+        ].map((k) => [k, form[k]]),
       );
       await api(
         form.isNew ? "/catalog/entries" : `/catalog/entries/${form.id}`,
@@ -63,7 +76,7 @@ export default function CatalogSettings({
         },
       );
       setForm(null);
-      setNotice("已保存到公开游戏列表，App 下次启动或刷新列表时读取生效。");
+      setNotice("已保存到公开应用列表，App 下次启动或刷新列表时读取生效。");
       await load();
       await onChanged();
     } catch (e) {
@@ -74,11 +87,11 @@ export default function CatalogSettings({
   }
   const busy = saving || uploading;
   return (
-    <section className="catalog-settings" aria-label="公开游戏列表配置">
+    <section className="catalog-settings" aria-label="公开应用列表配置">
       <div className="catalog-heading">
         <div>
-          <h2>公开游戏列表</h2>
-          <p>管理 App 可读取的游戏名称、地址、图标和版本标识。</p>
+          <h2>公开应用列表</h2>
+          <p>管理 App 可读取的名称、地址、图标、版本和屏幕方向。</p>
         </div>
         <div className="catalog-buttons">
           <button disabled={loading || busy} onClick={load}>
@@ -89,13 +102,13 @@ export default function CatalogSettings({
             disabled={loading || busy || !!error}
             onClick={() => edit()}
           >
-            <Plus size={16} /> 新增游戏
+            <Plus size={16} /> 新增应用
           </button>
         </div>
       </div>
       <p>
         已发布的网页项目自动加入列表，也可新增外部 H5
-        游戏。保存后立即更新公开接口，无需重新构建游戏。
+        应用。保存后立即更新公开接口，无需重新构建网页。
       </p>
       <a href={system.catalogUrl} target="_blank" rel="noreferrer">
         查看公开列表
@@ -111,15 +124,16 @@ export default function CatalogSettings({
         </p>
       )}
       {loading && !entries.length ? (
-        <p role="status">正在读取游戏列表…</p>
+        <p role="status">正在读取应用列表…</p>
       ) : (
         <div className="table-scroll">
           <table className="catalog-table">
             <thead>
               <tr>
-                <th>游戏 / 来源</th>
+                <th>应用 / 来源</th>
                 <th>访问地址 / 版本</th>
                 <th>公开状态</th>
+                <th>屏幕方向</th>
                 <th>操作</th>
               </tr>
             </thead>
@@ -164,6 +178,7 @@ export default function CatalogSettings({
                         ? entry.unavailableReason
                         : "已公开"}
                   </td>
+                  <td>{orientationLabels[entry.orientation]}</td>
                   <td>
                     <button
                       aria-label={`编辑 ${entry.game.name}`}
@@ -177,27 +192,27 @@ export default function CatalogSettings({
             </tbody>
           </table>
           {!entries.length && (
-            <p>暂无游戏。新增外部 H5，或发布一个网页项目后开始配置。</p>
+            <p>暂无应用。新增外部 H5，或发布一个网页项目后开始配置。</p>
           )}
         </div>
       )}
       <p>
-        App 保持原有的一次选择规则：已选游戏按 ID
-        更新地址，切换到其他游戏仍需重置
+        App 保持原有的一次选择规则：已选应用按 ID
+        更新地址，切换到其他应用仍需重置
         App。隐藏只影响公开列表，不会清除用户已有的选择和缓存。
       </p>
       <p>
         Android 桌面图标和桌面名称随 APK
-        打包。修改图标、或为新增游戏配置专属桌面入口后，需要重新构建并安装
+        打包。修改图标、或为新增应用配置专属桌面入口后，需要重新构建并安装
         APK；仅刷新列表不会更新桌面图标。
       </p>
       {form && (
         <Modal
-          title={form.isNew ? "新增公开游戏" : "编辑公开游戏"}
+          title={form.isNew ? "新增公开应用" : "编辑公开应用"}
           subtitle={
             form.projectId
               ? "关联项目的字段留空时自动跟随项目配置；不会修改项目构建参数。"
-              : "将可访问的 H5 地址加入 App 的远端游戏列表。"
+              : "将可访问的 H5 地址加入 App 的远端应用列表。"
           }
           onClose={() => {
             if (!busy) setForm(null);
@@ -206,7 +221,7 @@ export default function CatalogSettings({
           <form className="catalog-form" onSubmit={save}>
             <fieldset disabled={busy}>
               <label>
-                游戏标识
+                应用标识
                 <input
                   value={form.id}
                   onChange={(e) => update("id", e.target.value)}
@@ -217,7 +232,7 @@ export default function CatalogSettings({
                   placeholder="例如 my-game"
                 />
               </label>
-              <p className="help">保存后标识固定，App 用它记住所选游戏。</p>
+              <p className="help">保存后标识固定，App 用它记住所选应用。</p>
               <label>
                 显示名称
                 <input
@@ -225,11 +240,11 @@ export default function CatalogSettings({
                   onChange={(e) => update("name", e.target.value)}
                   required={!form.projectId}
                   maxLength={80}
-                  placeholder={form.defaults?.name || "游戏名称"}
+                  placeholder={form.defaults?.name || "应用名称"}
                 />
               </label>
               <label>
-                游戏链接
+                应用链接
                 <input
                   value={form.url}
                   onChange={(e) => update("url", e.target.value)}
@@ -256,11 +271,26 @@ export default function CatalogSettings({
                   }
                 />
               </label>
+              <label>
+                屏幕方向
+                <select
+                  value={form.orientation}
+                  onChange={(e) => update("orientation", e.target.value)}
+                >
+                  <option value="portrait">竖屏</option>
+                  <option value="landscape">横屏</option>
+                  <option value="auto">跟随系统</option>
+                </select>
+              </label>
+              <p className="help">
+                需安装支持方向配置的新版
+                App。保存后下次启动或刷新列表生效，无需再次打包。
+              </p>
               <IconField
                 value={form.icon}
                 onChange={(icon) => update("icon", icon)}
                 onUploading={setUploading}
-                label="游戏图标"
+                label="应用图标"
               />
               {form.projectId && (
                 <p className="help">
@@ -295,7 +325,7 @@ export default function CatalogSettings({
                   ? "正在保存…"
                   : uploading
                     ? "正在上传…"
-                    : "保存游戏配置"}
+                    : "保存应用配置"}
               </button>
             </div>
           </form>

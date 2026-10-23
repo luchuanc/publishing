@@ -44,6 +44,10 @@ export function openStore(dataDir) {
     );
     CREATE TABLE IF NOT EXISTS sessions (hash TEXT PRIMARY KEY, expiresAt INTEGER NOT NULL);
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS catalog_entries (
+      id TEXT PRIMARY KEY, projectId TEXT UNIQUE REFERENCES projects(id), config TEXT NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 1, createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL
+    );
   `);
   // Upgrade existing installations without changing build IDs or live versions.
   transaction(db, () => {

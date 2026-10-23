@@ -807,9 +807,25 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
     title: "测试 APK",
     autoPublish: false,
   });
+  const external = await service.catalogManager.save(
+    "external",
+    {
+      name: "外部游戏",
+      url: "https://external.example.com/v1/",
+      version: "1.0",
+      icon: icon.icon,
+      enabled: true,
+    },
+    true,
+  );
   const first = service.enqueueRelease(order.id);
   // Updating the game after enqueue must not change the queued APK's icon snapshot.
   await service.updateProject("demo", { appConfig: { icon: "" } });
+  await service.catalogManager.save("external", {
+    ...external,
+    url: "https://external.example.com/v2/",
+    icon: "",
+  });
   await service.work;
   assert.equal(service.build(first.id).status, "succeeded");
   assert.equal(service.project("android").currentReleaseId, null);
@@ -817,6 +833,12 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
   assert.match(attempt.sha256, /^[0-9a-f]{64}$/);
   assert.equal(attempt.appConfig.versionCode, 23);
   assert.equal(attempt.appConfig.games[0].iconFile, icon.icon);
+  assert.equal(attempt.appConfig.games[1].id, "external");
+  assert.equal(
+    attempt.appConfig.games[1].url,
+    "https://external.example.com/v1/",
+  );
+  assert.equal(attempt.appConfig.games[1].iconFile, icon.icon);
   assert.equal(service.catalog().games[0].icon, "");
   const apk = await fetch(attempt.downloadUrl);
   assert.equal(
@@ -849,6 +871,11 @@ test("Android config snapshots, PNG icons, APK downloads, repeat builds and roll
     service.snapshot().builds.find((b) => b.id === second.id).appConfig.games[0]
       .iconFile,
     "",
+  );
+  assert.equal(
+    service.snapshot().builds.find((b) => b.id === second.id).appConfig.games[1]
+      .url,
+    "https://external.example.com/v2/",
   );
   await service.publish("android", second.id);
   await service.rollback("android", second.id);
@@ -942,4 +969,226 @@ test("legacy game releases get subdirectory copies without changing original rol
     await (await fetch(url)).text(),
     '<script src="/zizou/assets/game.js"></script>',
   );
+});
+
+test("catalog project overrides save independently, follow publications by default, and survive reopening the database", async (t) => {
+  const { service, build, config } = await fixture(t);
+  const before = service.catalogManager.entries()[0];
+  assert.equal(before.available, false);
+  assert.equal(before.revision, 0);
+  assert.deepEqual(service.catalog().games, []);
+  const first = await build();
+  assert.equal(service.catalog().games[0].version, first.id);
+  const saved = await service.catalogManager.save("demo", {
+    ...before,
+    name: "App 展示名",
+    url: "/demo/?mobile=1#town",
+    version: "2.0.0",
+    enabled: true,
+  });
+  assert.equal(service.project("demo").name, base.name);
+  assert.equal(service.catalog().games[0].name, "App 展示名");
+  assert.equal(
+    service.catalog().games[0].url,
+    service.publicOrigin() + "/demo/?mobile=1#town",
+  );
+  assert.equal(
+    service.gameUrl({ defaultGameId: "demo" }),
+    service.catalog().games[0].url,
+  );
+  await assert.rejects(
+    service.catalogManager.save("demo", { ...before, name: "过期编辑" }),
+    { status: 409 },
+  );
+  service.updateSettings({ publicOrigin: "https://new.example.com:8888" });
+  assert.equal(
+    service.catalog().games[0].url,
+    "https://new.example.com:8888/demo/?mobile=1#town",
+  );
+  const reopened = openStore(config.dataDir);
+  try {
+    const other = new PublishingService(reopened, config);
+    assert.deepEqual(other.catalog(), service.catalog());
+    assert.equal(other.catalogManager.entries()[0].revision, saved.revision);
+  } finally {
+    reopened.close();
+  }
+  const hidden = await service.catalogManager.save("demo", {
+    ...saved,
+    enabled: false,
+  });
+  assert.deepEqual(service.catalog().games, []);
+  await service.catalogManager.save("demo", {
+    ...hidden,
+    name: "",
+    url: "",
+    version: "",
+    enabled: true,
+  });
+  await service.updateProject("demo", { name: "项目新名称" });
+  const second = await build();
+  assert.equal(service.catalog().games[0].version, second.id);
+  assert.equal(service.catalog().games[0].name, "项目新名称");
+  await service.archiveProject("demo", true);
+  assert.deepEqual(service.catalog().games, []);
+  await service.archiveProject("demo", false);
+  assert.equal(service.catalog().games[0].id, "demo");
+});
+
+test("catalog CRUD API persists external H5 entries, validates input and protects admin-only configuration", async (t) => {
+  const { service, url, config } = await fixture(t);
+  const payload = {
+    id: "outside",
+    name: "新游戏",
+    url: "https://outside.example.com/game/",
+    version: "1.2.0",
+    icon: "",
+    enabled: true,
+  };
+  assert.equal((await fetch(url + "/api/catalog/entries")).status, 401);
+  const headers = {
+    "Content-Type": "application/json",
+    "X-Publishing-Request": "1",
+    Origin: config.publicUrl,
+  };
+  const login = await fetch(url + "/api/login", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ password: config.password }),
+  });
+  headers.Cookie = login.headers.get("set-cookie").split(";")[0];
+  const request = (route, method = "GET", body, extra = {}) =>
+    fetch(url + "/api/catalog/entries" + route, {
+      method,
+      headers: { ...headers, ...extra },
+      body: body && JSON.stringify(body),
+    });
+  assert.equal(
+    (
+      await request("", "POST", payload, {
+        Origin: "https://other.example.com",
+      })
+    ).status,
+    403,
+  );
+  const first = await request("", "POST", payload);
+  assert.equal(first.status, 201);
+  const entry = await first.json();
+  assert.equal(entry.projectId, null);
+  assert.equal((await request("", "POST", payload)).status, 409);
+  for (const changed of [
+    { id: undefined },
+    { id: "a/b" },
+    { id: "demo" },
+    { name: "" },
+    { enabled: "true" },
+    { url: "javascript:alert(1)" },
+    { url: "//evil.example.com" },
+    { url: "https://user:pass@example.com/" },
+    { url: "/\\evil.example.com/" },
+    { icon: "../secret.png" },
+    { icon: "a".repeat(64) + ".png" },
+  ]) {
+    const result = await request("", "POST", {
+      ...payload,
+      id: "invalid",
+      ...changed,
+    });
+    assert.ok([400, 409].includes(result.status), JSON.stringify(changed));
+  }
+  let publicList = await (
+    await fetch(service.publicOrigin() + "/api/catalog")
+  ).json();
+  assert.equal(publicList.version, 1);
+  assert.deepEqual(publicList.games, [
+    {
+      id: "outside",
+      name: "新游戏",
+      url: payload.url,
+      version: "1.2.0",
+      icon: "",
+    },
+  ]);
+  assert.equal(
+    (await fetch(service.publicOrigin() + "/api/catalog/entries")).status,
+    404,
+  );
+  assert.ok(!JSON.stringify(publicList).includes("revision"));
+  const changed = {
+    ...entry,
+    name: "改名后的游戏",
+    url: "https://outside.example.com/new/",
+    version: "2.0",
+  };
+  assert.equal((await request("/outside", "PUT", changed)).status, 200);
+  assert.equal((await request("/outside", "PUT", changed)).status, 409);
+  assert.equal((await request("/missing", "PUT", changed)).status, 404);
+  publicList = await (
+    await fetch(service.publicOrigin() + "/api/catalog")
+  ).json();
+  assert.equal(publicList.games[0].name, changed.name);
+  assert.equal(publicList.games[0].url, changed.url);
+  assert.equal(publicList.games[0].version, changed.version);
+  assert.equal((await request("")).status, 200);
+  await assert.rejects(service.addProject({ ...base, id: "outside" }), {
+    status: 409,
+  });
+  service.updateSettings({ publicOrigin: "https://new.example.com:8888" });
+  assert.equal(
+    service.catalog().games[0].url,
+    changed.url,
+    "external URLs do not follow platform domain changes",
+  );
+});
+
+test("catalog icon overrides preserve project defaults, and platform links follow later domain changes", async (t) => {
+  const { service, build } = await fixture(t);
+  await build();
+  const png = Buffer.alloc(33);
+  Buffer.from("89504e470d0a1a0a", "hex").copy(png);
+  png.write("IHDR", 12);
+  png.writeUInt32BE(512, 16);
+  png.writeUInt32BE(512, 20);
+  const original = await service.uploadIcon({
+    data: "data:image/png;base64," + png.toString("base64"),
+  });
+  png[32] = 1;
+  const override = await service.uploadIcon({
+    data: "data:image/png;base64," + png.toString("base64"),
+  });
+  await service.updateProject("demo", { appConfig: { icon: original.icon } });
+  const current = service.catalogManager.entries()[0];
+  const saved = await service.catalogManager.save("demo", {
+    ...current,
+    icon: override.icon,
+  });
+  assert.equal(service.project("demo").appConfig.icon, original.icon);
+  assert.equal(
+    service.catalog().games[0].icon,
+    service.publicOrigin() + "/icons/" + override.icon,
+  );
+  assert.equal((await fetch(service.catalog().games[0].icon)).status, 200);
+  const external = await service.catalogManager.save(
+    "hosted",
+    {
+      name: "同站路径",
+      url: service.publicOrigin() + "/other/?a=1#play",
+      version: "",
+      icon: override.icon,
+      enabled: true,
+    },
+    true,
+  );
+  assert.equal(external.url, "/other/?a=1#play");
+  service.updateSettings({ publicOrigin: "https://new.example.com:8888" });
+  assert.equal(
+    service.catalog().games[1].url,
+    "https://new.example.com:8888/other/?a=1#play",
+  );
+  assert.equal(
+    service.catalog().games[1].icon,
+    "https://new.example.com:8888/icons/" + override.icon,
+  );
+  await service.catalogManager.save("demo", { ...saved, icon: "" });
+  assert.equal(service.catalogManager.entries()[0].iconFile, original.icon);
 });

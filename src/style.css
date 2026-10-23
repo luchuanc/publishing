@@ -938,8 +938,11 @@ tbody tr:hover {
 }
 .settings {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 42px;
+}
+.settings > section {
+  min-width: 0;
 }
 .settings section > p {
   color: #969daf;
@@ -1412,7 +1415,7 @@ input:disabled {
   }
   .lower-grid,
   .settings {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .release-panel {
     flex-wrap: wrap;
@@ -1821,6 +1824,109 @@ textarea:focus {
 }
 .settings .storage-settings {
   grid-column: 1 / -1;
+}
+.settings .catalog-settings {
+  grid-column: 1 / -1;
+}
+.catalog-heading,
+.catalog-buttons,
+.catalog-game {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.catalog-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.catalog-heading h2 {
+  margin: 0 0 8px;
+}
+.catalog-heading p {
+  margin: 0;
+  color: #626d83;
+  font-size: 13px;
+}
+.catalog-buttons button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.catalog-table {
+  width: 100%;
+  margin: 20px 0;
+}
+.catalog-table th,
+.catalog-table td {
+  padding: 14px 12px;
+  text-align: left;
+  border-bottom: 1px solid #e8ebf2;
+}
+.catalog-table td:nth-child(2) {
+  overflow-wrap: anywhere;
+  max-width: 400px;
+}
+.catalog-table td:last-child,
+.catalog-table td:nth-child(3) {
+  white-space: nowrap;
+}
+.catalog-table small {
+  display: block;
+  margin-top: 7px;
+  color: #626d83;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.catalog-game {
+  min-width: 175px;
+}
+.catalog-game img,
+.catalog-placeholder {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 10px;
+}
+.catalog-placeholder {
+  display: grid;
+  place-items: center;
+  background: #eeecff;
+  color: #6755e7;
+}
+.settings section > .catalog-notice {
+  color: #18754a;
+  background: #edf8f2;
+  padding: 12px;
+  border-radius: 8px;
+}
+.catalog-form fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+.settings .catalog-form .catalog-toggle {
+  flex-direction: row;
+  align-items: center;
+}
+.settings .catalog-toggle input {
+  width: auto;
+}
+.catalog-form .help {
+  margin: -4px 0 0;
+}
+.settings .catalog-form {
+  margin-bottom: 0;
+}
+@media (max-width: 650px) {
+  .catalog-table {
+    min-width: 640px;
+  }
+  .catalog-buttons {
+    flex-wrap: wrap;
+  }
 }
 .storage-heading,
 .storage-actions,

@@ -1,5 +1,6 @@
 import { prepareLegacyReleases } from "./legacy.mjs";
 import { StorageManager } from "./storage.mjs";
+import { CatalogManager } from "./catalog.mjs";
 import { createPublicServer } from "./public.mjs";
 import {
   androidConfig,
@@ -147,6 +148,7 @@ export class PublishingService {
     this.stopping = false;
     this.artifactLock = Promise.resolve();
     this.storage = new StorageManager(this);
+    this.catalogManager = new CatalogManager(this);
   }
   withArtifactLock(operation) {
     const result = this.artifactLock.then(operation);
@@ -397,7 +399,8 @@ export class PublishingService {
       return url.href;
     }
     return config.defaultGameId
-      ? `${this.publicOrigin()}/${config.defaultGameId}/`
+      ? this.catalogManager.entries().find((e) => e.id === config.defaultGameId)
+          ?.game.url || `${this.publicOrigin()}/${config.defaultGameId}/`
       : "";
   }
   address(project) {
@@ -413,21 +416,7 @@ export class PublishingService {
       version: 1,
       baseUrl: this.publicOrigin(),
       catalogUrl: `${this.publicOrigin()}/api/catalog`,
-      games: this.db
-        .prepare(
-          "SELECT * FROM projects WHERE kind='web' AND archived=0 AND currentReleaseId IS NOT NULL ORDER BY createdAt,id",
-        )
-        .all()
-        .map((p) => {
-          const { icon } = iconConfig(p.appConfig);
-          return {
-            id: p.id,
-            name: p.name,
-            url: this.address(p),
-            version: p.currentReleaseId,
-            icon: icon ? `${this.publicOrigin()}/icons/${icon}` : "",
-          };
-        }),
+      games: this.catalogManager.published().map((entry) => entry.game),
     };
   }
   appSnapshot(p) {
@@ -442,9 +431,9 @@ export class PublishingService {
       customGameUrl: !!c.gameUrl,
       gameUrl: this.gameUrl(c),
       catalogUrl: `${this.publicOrigin()}/api/catalog`,
-      games: this.catalog().games.map((game) => ({
-        ...game,
-        iconFile: iconConfig(this.project(game.id).appConfig).icon,
+      games: this.catalogManager.published().map((entry) => ({
+        ...entry.game,
+        iconFile: entry.iconFile,
       })),
     };
   }
@@ -590,6 +579,8 @@ export class PublishingService {
     const p = validateProject(input);
     if (this.db.prepare("SELECT id FROM projects WHERE id=?").get(p.id))
       fail("游戏标识已存在", 409);
+    if (this.db.prepare("SELECT id FROM catalog_entries WHERE id=?").get(p.id))
+      fail("该标识已被公开游戏列表使用，请使用其他标识", 409);
     if (p.publicUrl === this.config.publicUrl)
       fail("游戏访问地址不能与管理后台相同");
     // The legacy UNIQUE port column is retained for lossless upgrades; it no longer opens a listener.

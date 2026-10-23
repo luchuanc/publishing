@@ -140,6 +140,25 @@ export function createApp(service, config) {
         return;
       if (url.pathname === "/api/state" && req.method === "GET")
         return json(res, 200, service.snapshot());
+      if (url.pathname === "/api/catalog/entries" && req.method === "GET")
+        return json(res, 200, { entries: service.catalogManager.entries() });
+      if (url.pathname === "/api/catalog/entries" && req.method === "POST") {
+        const input = await body(req);
+        return json(
+          res,
+          201,
+          await service.catalogManager.save(input.id, input, true),
+        );
+      }
+      const catalogMatch = /^\/api\/catalog\/entries\/([a-zA-Z0-9-]+)$/.exec(
+        url.pathname,
+      );
+      if (catalogMatch && req.method === "PUT")
+        return json(
+          res,
+          200,
+          await service.catalogManager.save(catalogMatch[1], await body(req)),
+        );
       if (url.pathname === "/api/storage" && req.method === "GET")
         return json(res, 200, await service.storage.inspect());
       if (url.pathname === "/api/storage/cleanup" && req.method === "POST") {

@@ -39,6 +39,7 @@ import {
 } from "lucide-react";
 import "./style.css";
 import StorageSettings from "./StorageSettings.jsx";
+import CatalogSettings from "./CatalogSettings.jsx";
 
 async function api(route, options = {}) {
   const response = await fetch(`/api${route}`, {
@@ -2107,6 +2108,13 @@ function App() {
             </div>
           ) : (
             <div className="settings">
+              <CatalogSettings
+                api={api}
+                system={state.system}
+                IconField={IconField}
+                Modal={Modal}
+                onChanged={refresh}
+              />
               <StorageSettings api={api} onChanged={refresh} />
               <PublicSettings
                 system={state.system}
